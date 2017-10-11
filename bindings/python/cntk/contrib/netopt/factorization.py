@@ -61,14 +61,13 @@ def factor_dense(model, projection_function = None, filter_function = None,
         raise ValueError("Dense: default factor function (svd) requires a projection_function.")
     
     dense_filter = (lambda x: type(x) == cntk.Function 
-                                            and x.op_name == 'Dense' 
-                                            and x.is_block
-                                            and (filter_function(x) if filter_function else True))
+                       and x.op_name == 'Dense' 
+                       and filter_function(x) if filter_function else True)
    
     def dense_converter(model):        
         W, b = model.W.value, model.b.value
 
-        ht, wdth = W.shape        
+        ht, wdth = W.shape
         # k is the rank of the output matrices. If a projection function is 
         # provided, then use it, otherwise assign min of two dimensions of
         # W to k.
@@ -76,7 +75,7 @@ def factor_dense(model, projection_function = None, filter_function = None,
         W1, W2 = factor_function(W, k) if factor_function else svd_subprojection(W, k)
 
         Ws = {'W1': W1, 'W2': W2}
-        dfl = dense_factored((int(k), int(wdth)),
+        dfl = dense_factored((k, wdth),
             init=Ws,
             activation=None,
             init_bias=b,
