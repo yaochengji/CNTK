@@ -5,7 +5,7 @@
 #pragma once
 
 #ifdef USE_MKL
-#define USE_MKLDNN
+//#define USE_MKLDNN
 #endif
 
 #ifdef USE_MKLDNN
