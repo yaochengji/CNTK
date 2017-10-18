@@ -17,10 +17,10 @@ def get_configuration():
     from FasterRCNN_config import cfg as detector_cfg
     # for VGG16 base model use:         from utils.configs.VGG16_config import cfg as network_cfg
     # for AlexNet base model use:       from utils.configs.AlexNet_config import cfg as network_cfg
-    from utils.configs.AlexNet_config import cfg as network_cfg
+    from utils.configs.VGG16_config import cfg as network_cfg
     # for Pascal VOC 2007 data set use: from utils.configs.Pascal_config import cfg as dataset_cfg
     # for the Grocery data set use:     from utils.configs.Grocery_config import cfg as dataset_cfg
-    from utils.configs.Grocery_config import cfg as dataset_cfg
+    from utils.configs.Pascal_config import cfg as dataset_cfg
 
     return merge_configs([detector_cfg, network_cfg, dataset_cfg])
 
@@ -30,8 +30,24 @@ if __name__ == '__main__':
     prepare(cfg, False)
     cntk.device.try_set_default_device(cntk.device.gpu(cfg.GPU_ID))
 
-    # train and test
+    # # train
+    # model_path = os.path.join(cfg.OUTPUT_PATH, "faster_rcnn_eval_{}_{}_{}.model"
+    #                           .format(cfg["MODEL"].BASE_MODEL, cfg["DATA"].DATASET, "e2e"))
+    # if os.path.exists(model_path) and cfg["CNTK"].MAKE_MODE:
+    #     print("Loading existing model from %s" % model_path)
+    #     trained_model = cntk.load_model(model_path)
+    # else:
+    #     trained_model = train_faster_rcnn(cfg)
+    #     trained_model.save(model_path)
+    #     if cfg["CNTK"].DEBUG_OUTPUT:
+    #         cntk.logging.graph.plot(trained_model, os.path.join(cfg.OUTPUT_PATH, "graph_frcn_eval_{}_{}.{}"
+    #                                       .format(cfg["CNTK"].BASE_MODEL, "e2e",
+    #                                               cfg["CNTK"].GRAPH_TYPE)))
+    #     print("Stored trained model at %s" % model_path)
+
+    # train
     trained_model = train_faster_rcnn(cfg)
+    # test
     eval_results = compute_test_set_aps(trained_model, cfg)
 
     # write AP results to output

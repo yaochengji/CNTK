@@ -21,6 +21,8 @@ from cntk.logging.graph import find_by_name, plot
 from cntk.losses import cross_entropy_with_softmax
 from cntk.metrics import classification_error
 from _cntk_py import force_deterministic_algorithms
+from cntk import user_function
+from cntk_debug_single import DebugLayerSingle
 
 abs_path = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(abs_path, ".."))
@@ -171,15 +173,20 @@ def clone_conv_layers(base_model, cfg):
 def create_fast_rcnn_predictor(conv_out, rois, fc_layers, cfg):
     # RCNN
     roi_out = roipooling(conv_out, rois, cntk.MAX_POOLING, (cfg["MODEL"].ROI_DIM, cfg["MODEL"].ROI_DIM), spatial_scale=1/16.0)
+    roi_out = user_function(DebugLayerSingle(roi_out, debug_name="roi_out_debug"))
     fc_out = fc_layers(roi_out)
 
     # prediction head
-    W_pred = parameter(shape=(4096, cfg["DATA"].NUM_CLASSES), init=normal(scale=0.01), name="cls_score.W")
+    # REVIEW SPTIWARI: Changed initial values for the layers above and initialized it to constant values below
+    # W_pred = parameter(shape=(4096, cfg["DATA"].NUM_CLASSES), init=normal(scale=0.01), name="cls_score.W")
+    W_pred = parameter(shape=(4096, cfg["DATA"].NUM_CLASSES), init=1e-4, name="cls_score.W")
     b_pred = parameter(shape=cfg["DATA"].NUM_CLASSES, init=0, name="cls_score.b")
     cls_score = plus(times(fc_out, W_pred), b_pred, name='cls_score')
 
     # regression head
-    W_regr = parameter(shape=(4096, cfg["DATA"].NUM_CLASSES*4), init=normal(scale=0.001), name="bbox_regr.W")
+    # REVIEW SPTIWARI: Changed initial values for the layers above and initialized it to constant values below
+    # W_regr = parameter(shape=(4096, cfg["DATA"].NUM_CLASSES*4), init=normal(scale=0.001), name="bbox_regr.W")
+    W_regr = parameter(shape=(4096, cfg["DATA"].NUM_CLASSES * 4), init=1e-4, name="bbox_regr.W")
     b_regr = parameter(shape=cfg["DATA"].NUM_CLASSES*4, init=0, name="bbox_regr.b")
     bbox_pred = plus(times(fc_out, W_regr), b_regr, name='bbox_regr')
 
@@ -215,6 +222,7 @@ def create_detection_losses(cls_score, label_targets, bbox_pred, rois, bbox_targ
     reduced_cls_loss = cntk.as_block(normalized_cls_loss,
                                      [(p_cls_score, cls_score), (p_label_targets, label_targets)],
                                      'CrossEntropyWithSoftmax', 'norm_cls_loss')
+    reduced_cls_loss = user_function(DebugLayerSingle(reduced_cls_loss, debug_name="final_cls_loss_debug"))
 
     # regression loss
     p_bbox_pred = placeholder()
@@ -227,6 +235,7 @@ def create_detection_losses(cls_score, label_targets, bbox_pred, rois, bbox_targ
     reduced_bbox_loss = cntk.as_block(normalized_bbox_loss,
                                      [(p_bbox_pred, bbox_pred), (p_bbox_targets, bbox_targets), (p_bbox_inside_weights, bbox_inside_weights)],
                                      'SmoothL1Loss', 'norm_bbox_loss')
+    reduced_bbox_loss = user_function(DebugLayerSingle(reduced_bbox_loss, debug_name="final_bbox_loss_debug"))
 
     detection_losses = plus(reduced_cls_loss, reduced_bbox_loss, name="detection_losses")
 

@@ -146,7 +146,9 @@ class ProposalLayer(UserFunction):
 
         # 4. sort all (proposal, score) pairs by score from highest to lowest
         # 5. take top pre_nms_topN (e.g. 6000)
-        order = scores.ravel().argsort(kind='mergesort')[::-1]
+        # REVIEW SPTIWARI: Removing mergesort below for debugging and matching Caffe model.
+        # order = scores.ravel().argsort(kind='mergesort')[::-1]
+        order = scores.ravel().argsort()[::-1]
         if pre_nms_topN > 0:
             order = order[:pre_nms_topN]
         proposals = proposals[order, :]
@@ -155,7 +157,7 @@ class ProposalLayer(UserFunction):
         # 6. apply nms (e.g. threshold = 0.7)
         # 7. take after_nms_topN (e.g. 300)
         # 8. return the top proposals (-> RoIs top)
-        keep = nms(np.hstack((proposals, scores)), nms_thresh)
+        keep = nms(np.hstack((proposals, scores)), nms_thresh, use_gpu_nms=False)
         if post_nms_topN > 0:
             keep = keep[:post_nms_topN]
         proposals = proposals[keep, :]
