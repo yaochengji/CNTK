@@ -77,9 +77,9 @@ public:
     size_t KernelCount() const { return m_kernelCount; }
 
     ConvolveGeometry(const TensorShape& inputShape, const TensorShape& kernelShape, const TensorShape& mapCount, const TensorShape& stride,
-                     const BoolVec& sharing, const BoolVec& autoPad, const TensorShape& lowerPad, const TensorShape& upperPad, const TensorShape& dilation=TensorShape(1), const bool ceilOutDim = false)
-                     : m_inputShape(inputShape), m_kernelShape(kernelShape), m_mapCount(mapCount), m_stride(stride), m_sharing(sharing),
-                     m_autoPad(autoPad), m_lowerPad(lowerPad), m_upperPad(upperPad), m_dilation(dilation)
+        const BoolVec& sharing, const BoolVec& autoPad, const TensorShape& lowerPad, const TensorShape& upperPad, const TensorShape& dilation = TensorShape(1), const bool ceilOutDim = false)
+        : m_inputShape(inputShape), m_kernelShape(kernelShape), m_mapCount(mapCount), m_stride(stride), m_sharing(sharing),
+        m_autoPad(autoPad), m_lowerPad(lowerPad), m_upperPad(upperPad), m_dilation(dilation)
     {
         // Note: this ctor is a bit long so sit back and relax.
 
@@ -92,16 +92,19 @@ public:
         assert(m_upperPad.GetRank() == 1 || m_upperPad.GetRank() == m_inputShape.GetRank());
 
         m_outputShape = ComputeOutputShape(m_inputShape, m_kernelShape, m_mapCount, m_stride,
-                                           m_sharing, m_autoPad, m_lowerPad, m_upperPad, m_dilation, ceilOutDim);
+            m_sharing, m_autoPad, m_lowerPad, m_upperPad, m_dilation, ceilOutDim);
         assert(m_inputShape.GetRank() == m_outputShape.GetRank());
-
-        size_t dimCount = inputShape.GetRank();
-        size_t kernelSize = kernelShape.GetNumElements();
 
         // Compute the total number of kernels.
         m_kernelCount = 1;
-        for (size_t i = 0; i < dimCount; i++)
+        for (size_t i = 0; i < inputShape.GetRank(); i++)
             m_kernelCount *= !GetSharing(i) ? m_outputShape[i] : GetMapCount(i);
+    }
+
+    bool ComputeConvGeometryExplicit()
+    {
+        size_t dimCount = m_inputShape.GetRank();
+        size_t kernelSize = m_kernelShape.GetNumElements();
 
         // Compute the "Start" indices.
         m_start.resize(dimCount);
@@ -339,6 +342,7 @@ public:
             m_mpRowCol[row] = col;
             m_mpRowIwht[row] = kern * (int)kernelSize;
         }
+        return true;
     }
 
     size_t GetStride(size_t dim) const
