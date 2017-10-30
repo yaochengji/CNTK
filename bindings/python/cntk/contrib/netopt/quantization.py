@@ -1,39 +1,27 @@
 import cntk as C
+'''
+from cntk.variables import Parameter
+from cntk.ops import times
+from cntk.internal import _as_tuple
+from cntk.layers.blocks import _initializer_for, _INFERRED, identity
+from cntk.layers.blocks import UntestedBranchError  # helpers
+from cntk.default_options import is_default_override
+from cntk.default_options import get_default_override, default_override_or
+
+import os
+import sys
+'''
 from cntk.contrib.netopt.custom_convolution_ops import *
 
 # Register the native binary convolution function that calls halide
 # operations internally.
-C.ops.register_native_user_function(
+ops.register_native_user_function(
                  'NativeBinaryConvolveFunction', 
                  'Cntk.BinaryConvolutionExample-' + C.__version__.rstrip('+'), 
                  'CreateBinaryConvolveFunction')
 
-def binarize_convolution(model, train_function, filter_function = None):
-    '''
-    Replace Convolution layers in the model to Halide implementations of
-    binarized convolutions.
 
-    Args:
-        model          : model that needs convolutions to be optimized.
-        train_function : this is a two step process. 
-                            (1) convert the model to binary convolution
-                            (2) transform to the Halide implementation
-                         between step (1) and (2), we need to train the model
-                         to get the best results. train_function provides this
-                         functionality.
-       filter_function : filter layers in the model to apply the binarization                
-                        
-    Returns:
-        A model with Halid operators.
-    '''
-    assert(train_function) # needs a training function to convert.    
-
-    z = convert_to_binary_convolution(model)
-    train_function(z)
-    return convert_to_native_binary_convolution(z)
-
-
-def convert_to_native_binary_convolution(model):
+def optimize_binary_convolution(model):
     '''
     Clones a binary convolution network, sharing the original parameters 
     but substitutes the python 'BinaryConvolution' Function instances 
@@ -54,20 +42,12 @@ def convert_to_native_binary_convolution(model):
     def bin_converter(x):
 
         att = x.block_root.attributes
-        # Need a square filter.
-        assert(x.inputs[0].shape[-1] == x.inputs[0].shape[-2])
-
-        # These are the attributes needed for the native convolution layer
-        # names are defined in BinaryConvolveOp.h
+                  
         attributes = {'stride' : att["strides"][-1],
                       'padding' : att["autoPadding"][-1],
-                      'size' : x.inputs[0].shape[-1],                       
-                      'h' : x.inputs[1].shape[1],
-                      'w' : x.inputs[1].shape[2],
-                      'channels' :  x.inputs[1].shape[0],
-                      'filters' : x.inputs[0].shape[0] }                     
+                      'size' : x.inputs[0].shape[-1]}
             
-        return C.ops.native_user_function(
+        return ops.native_user_function(
                     'NativeBinaryConvolveFunction',
                     list(x.inputs), 
                     attributes, 
@@ -76,12 +56,11 @@ def convert_to_native_binary_convolution(model):
     return C.misc.convert(model, bin_conv_filter, bin_converter)
 
 
-def convert_to_binary_convolution(model, filter_function = None):
+def binarize_convolution(model, filter_function = None):
     '''
     Replace convolution functions in the model with binary convolutions.
     The function replaces the convolution function inside the 
     cntk.layers.convolution block without changing the block structure.
-    The output model has python version of the binarized convolutions.
 
     Args:
         model           : model that needs to be binarized.
@@ -159,7 +138,7 @@ def binary_convolution(filter_shape,
     '''
 
     kernel_shape = (num_filters, channels) + filter_shape
-    W = C.Parameter(shape=kernel_shape, init=init, name="filter")
+    W = Parameter(shape=kernel_shape, init=init, name="filter")
     
     
     def convolution(operand):

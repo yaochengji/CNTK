@@ -3,16 +3,18 @@
 # Licensed under the MIT license. See LICENSE.md file in the project root
 # for full license information.
 # ==============================================================================
+
+from cntk import *
+from cntk.ops.functions import UserFunction
 import numpy as np
 import cntk as C
-from cntk.ops.functions import UserFunction
 
 # custom sign function using the straight through estimator as gradient. This is implemented without a numpy intermediate
 # representation, giving a much faster run time.
-class SignWithEstimation(UserFunction):
+class Sign(UserFunction):
     # initialize by creating new userfunction and assigning function and grad inputs and functions
-    def __init__(self, arg, name='SignWithEstimation'):
-        super(SignWithEstimation, self).__init__([arg], as_numpy=False, name=name)
+    def __init__(self, arg, name='Sign'):
+        super(Sign, self).__init__([arg], as_numpy=False, name=name)
         # create an input variable and a function object for the forward propagated function
         self.action, self.actionArg = self.signFunc(arg)
         # create a binary input gradient function, two input variables and the function object. gradroot is the incoming
@@ -22,12 +24,12 @@ class SignWithEstimation(UserFunction):
 
     # define the forward propagation function y = sign(x)
     def signFunc(self, arg):
-        # create an input variable that matches the dimension of the input argument        
+        # create an input variable that matches the dimension of the input argument
         signIn = C.input(shape=arg.shape, dynamic_axes=arg.dynamic_axes)
         # create the first stage of the sign function, check if input is greater than zero
-        actionfunc = C.greater(signIn, 0)
+        actionfunc = greater(signIn, 0)
         # return the second stage of the sign function, replace any 0s with -1s
-        return C.element_select(actionfunc, actionfunc, -1), signIn
+        return element_select(actionfunc, actionfunc, -1), signIn
 
     # define the backward propagation function, delta_out = delta_in * (|x| <= 1) ? 1 : 0.
     def gradFunc(self, arg):
@@ -36,11 +38,11 @@ class SignWithEstimation(UserFunction):
         # create an input variable for the gradient passed from the next stage
         gradRoot = C.input(shape=arg.shape, dynamic_axes=arg.dynamic_axes)
         # first step is to take absolute value of input arg
-        signGrad = C.abs(gradIn)
+        signGrad = abs(gradIn)
         # then compare its magnitude to 1
-        signGrad = C.less_equal(signGrad, 1)
+        signGrad = less_equal(signGrad, 1)
         # finish by multiplying this result with the input gradient
-        return C.element_times(gradRoot, signGrad), gradIn, gradRoot
+        return element_times(gradRoot, signGrad), gradIn, gradRoot
 
     # define what should happen when a customsign function object is forwarded
     def forward(self, argument, device, outputs_to_retain):
@@ -62,11 +64,11 @@ class SignWithEstimation(UserFunction):
         _, output_values = self.grad.forward({self.gradArg: val, self.gradRoot: root_gradients},
                                              self.grad.outputs, device=state.device(), as_numpy=False)
         # return the proper output
-        return C.output_values[self.grad.output]
+        return output_values[self.grad.output]
 
     # define a function that returns an output_variable with the shape of this function
     def infer_outputs(self):
-        return [C.output_variable(self.inputs[0].shape, self.inputs[0].dtype, self.inputs[0].dynamic_axes)]
+        return [output_variable(self.inputs[0].shape, self.inputs[0].dtype, self.inputs[0].dynamic_axes)]
 
 
 # A different implementation of sign with the straight through estimator for backprop. Has identical outputs but uses numpy instead
@@ -87,7 +89,7 @@ class pySign(UserFunction):
         return grad*root_gradients
 
     def infer_outputs(self):
-        return [C.output_variable(self.inputs[0].shape, self.inputs[0].dtype,
+        return [output_variable(self.inputs[0].shape, self.inputs[0].dtype,
                                 self.inputs[0].dynamic_axes)]
 
 # Similar to CustomSign, Multibit binarizes an input using straight through estimator gradients. However, Multibit also supports a 
@@ -123,8 +125,8 @@ class MultibitKernel(UserFunction):
         approx = C.element_times(multiIn, 0)
         # iterate through the maximum number of bits specified by the bit maps, basically compute each level of binarization
         for i in range(max_bits):
-            # determine which values of the input should be binarized to i bits or more            
-            hot_vals = (np.greater(bit_map, i)).as_type(float)
+            # determine which values of the input should be binarized to i bits or more
+            hot_vals = C.greater(bit_map, i)
             # select only the values which we need to binarize
             valid_vals = C.element_select(hot_vals, carry_over, 0)
             # compute mean on a per kernel basis, reshaping is done to allow for sum reduction along only axis 0 (the kernels)
@@ -154,7 +156,7 @@ class MultibitKernel(UserFunction):
         signGrad = C.less_equal(signGrad, bit_map)
         outGrad = signGrad
 
-        outGrad = C.element_times(gradRoot, outGrad)
+        outGrad = element_times(gradRoot, outGrad)
     
         return outGrad, gradIn, gradRoot
 
@@ -181,7 +183,7 @@ class MultibitKernel(UserFunction):
 
     # define a function that returns an output_variable with the shape of this function
     def infer_outputs(self):
-        return [C.output_variable(self.inputs[0].shape, self.inputs[0].dtype, self.inputs[0].dynamic_axes)]
+        return [output_variable(self.inputs[0].shape, self.inputs[0].dtype, self.inputs[0].dynamic_axes)]
 
 
 
@@ -218,14 +220,15 @@ class Multibit(UserFunction):
         gradIn = C.input(shape=arg.shape, dynamic_axes=arg.dynamic_axes)
         # create an input variable for the gradient passed from the next stage
         gradRoot = C.input(shape=arg.shape, dynamic_axes=arg.dynamic_axes)
-  
+        #gradOut =  C.input(shape=arg.shape, dynamic_axes=arg.dynamic_axes)
+
         signGrad = C.abs(gradIn)
         # new idea, bound of clipping should be a function of the bit map since higher bits can represent higher numbers
         bit_map = C.constant(self.bit_map)
         signGrad = C.less_equal(signGrad, bit_map)
         outGrad = signGrad
 
-        outGrad = C.element_times(gradRoot, outGrad)
+        outGrad = element_times(gradRoot, outGrad)
     
         return outGrad, gradIn, gradRoot
 
@@ -252,7 +255,7 @@ class Multibit(UserFunction):
 
     # define a function that returns an output_variable with the shape of this function
     def infer_outputs(self):
-        output_vars = [C.output_variable(self.inputs[0].shape, self.inputs[0].dtype, self.inputs[0].dynamic_axes)]
+        output_vars = [output_variable(self.inputs[0].shape, self.inputs[0].dtype, self.inputs[0].dynamic_axes)]
 
         self.action, self.actionArg = self.multiFunc(self.inputs[0])
         self.grad, self.gradArg, self.gradRoot = self.gradFunc(self.inputs[0])
@@ -272,10 +275,10 @@ class Multibit(UserFunction):
 
 # these are the face of the custom functions, they simply instantiate a custom function by calling user_function
 def CustomSign(input):
-    return C.user_function(SignWithEstimation(input))
+    return user_function(Sign(input))
 
 def CustomPySign(input):
-    return C.user_function(pySign(input))
+    return user_function(pySign(input))
 
 def CustomMultibit(input, bit_map, mean_bits=None):
     if (mean_bits):
@@ -290,7 +293,7 @@ def CustomMultibit(input, bit_map, mean_bits=None):
         else:
             bit_map = np.asarray(bit_map)
     assert (bit_map.shape == input.shape)
-    return C.user_function(Multibit(input, bit_map))
+    return user_function(Multibit(input, bit_map))
 
 def CustomMultibitKernel(input, bit_map, mean_bits=None):
     if (mean_bits):
@@ -305,4 +308,4 @@ def CustomMultibitKernel(input, bit_map, mean_bits=None):
         else:
             bit_map = np.asarray(bit_map)
     assert (bit_map.shape == input.shape)
-    return C.user_function(MultibitKernel(input, bit_map))
+    return user_function(MultibitKernel(input, bit_map))
