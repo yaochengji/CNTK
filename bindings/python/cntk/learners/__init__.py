@@ -270,7 +270,7 @@ def training_parameter_schedule(schedule, unit=UnitType.minibatch, epoch_size=No
         training parameter schedule
 
     See also:
-        :func:`learning_rate_schedule`
+        :func:`learning_parameter_schedule`
     '''
 
     if unit == UnitType.sample:
@@ -352,6 +352,34 @@ def learning_parameter_schedule(schedule, minibatch_size=None, epoch_size=None):
 
     raise ValueError(
         'schedule must be either a float or a list, not %s' % type(schedule))
+
+
+@typemap
+def learning_parameter_schedule_per_sample(schedule, epoch_size=None):
+    '''
+    Create a learning parameter schedule as if the parameter is applied to minibatches of size 1. CNTK
+    will scale the parameters accordingly with respect to the actual minibatch size.
+
+    Args:
+        schedule (float or list): if float, is the parameter schedule to be used
+         for all samples. In case of list [p_1, p_2, .., p_n], the i-th parameter p_i in the list is used as the
+         value from the (``epoch_size`` * (i-1) + 1)-th sample to the (``epoch_size`` * i)-th sample. If list contains
+         pair, i.e. [(num_epoch_1, p_1), (num_epoch_n, p_2), .., (num_epoch_n, p_n)], the i-th parameter is used as a
+         value from the (``epoch_size`` * (num_epoch_0 + ... + num_epoch_2 + ... + num_epoch_(i-1) + 1)-th sample to the
+         (``epoch_size`` * num_epoch_i)-th sample (taking num_epoch_0 = 0 as a special initialization).
+        epoch_size (optional, int): number of samples as a scheduling unit.
+         Parameters in the schedule change their values every ``epoch_size``
+         samples. If no ``epoch_size`` is provided, this parameter is substituted
+         by the size of the full data sweep, in which case the scheduling unit is
+         the entire data sweep (as indicated by the MinibatchSource) and parameters
+         change their values on the sweep-by-sweep basis specified by the
+         ``schedule``.
+
+    Returns:
+        learning parameter schedule as if it is applied to minibatches of size 1.
+    '''
+    return learning_parameter_schedule(schedule, minibatch_size=1, epoch_size=epoch_size)
+
 
 @typemap
 def learning_rate_schedule(lr, unit, epoch_size=None):
