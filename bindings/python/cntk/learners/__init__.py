@@ -412,8 +412,9 @@ def learning_rate_schedule(lr, unit, epoch_size=None):
 @typemap
 def momentum_schedule(momentum, epoch_size=None, minibatch_size = None):
     '''
-    Create a per-minibatch momentum schedule (using the same semantics as
-    :func:`training_parameter_schedule` with the `unit=UnitType.minibatch`).
+    Create a momentum schedule (using the same semantics as
+    :func:`learning_parameter_schedule`) which applies the momentum 
+    decay every N samples where N is specified by the argument `minibatch_size`.
 
     Args:
         momentum (float or list): see parameter ``schedule`` in
@@ -448,6 +449,23 @@ def momentum_schedule(momentum, epoch_size=None, minibatch_size = None):
         momentum schedule
     '''
     return learning_parameter_schedule(momentum, minibatch_size, epoch_size)
+
+
+@typemap
+def momentum_schedule_per_sample(momentum, epoch_size=None):
+    '''
+    Create a per-sample momentum schedule (using the same semantics as
+    :func:`momentum_schedule` but specializing in per sample momentum schedule).
+
+    Args:
+        momentum (float or list): see parameter ``schedule`` in
+         :func:`training_parameter_schedule`.
+        epoch_size (int): see parameter ``epoch_size`` in
+         :func:`momentum_schedule`.
+    Returns:
+        momentum schedule
+    '''
+    return momentum_schedule(momentum, minibatch_size=1, epoch_size=epoch_size)
 
 
 @typemap
