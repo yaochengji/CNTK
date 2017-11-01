@@ -475,16 +475,13 @@ def momentum_as_time_constant_schedule(momentum, epoch_size=None):
          :func:`training_parameter_schedule`.
         epoch_size (int): see parameter ``epoch_size`` in
          :func:`training_parameter_schedule`.
-        minibatch_size (int): an integer to specify the reference minibatch size that schedule are designed for; 
-          CNTK will scale the schedule internally so as to simulate the behavior of the schedule as much as possible
-          to match the designed effect. 
 
     CNTK specifies momentum in a minibatch-size agnostic way as the time
     constant (in samples) of a unit-gain 1st-order IIR filter. The value
     specifies the number of samples after which a gradient has an effect of
     1/e=37%.
 
-    If you want to specify the momentum per sample (or per minibatch),
+    If you want to specify the momentum per N samples (or per minibatch),
     use :func:`momentum_schedule`.
 
     Examples:
