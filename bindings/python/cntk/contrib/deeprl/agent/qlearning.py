@@ -226,7 +226,7 @@ class QLearning(AgentBaseClass):
                 (1 - float(self.step_count)/self._parameters.eta_decay_step_count))
 
             self._trainer.parameter_learners[0].reset_learning_rate(
-                C.learners.learning_parameter_schedule_per_sampe(
+                C.learners.learning_parameter_schedule_per_sample(
                     eta))
 
     def _adjust_exploration_rate(self):
