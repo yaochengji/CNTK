@@ -421,12 +421,11 @@ def momentum_schedule(momentum, epoch_size=None, minibatch_size = None):
          :func:`training_parameter_schedule`.
         epoch_size (int): see parameter ``epoch_size`` in
          :func:`training_parameter_schedule`.
-        minibatch_size (int): an integer to specify the reference minibatch size that schedule are designed for; 
-          CNTK will scale the schedule internally so as to simulate the behavior of the schedule as much as possible
-          to match the designed effect. 
-
-    If you want to provide momentum values in a minibatch-size
-    agnostic way, use :func:`momentum_as_time_constant_schedule`.
+        minibatch_size (int): an integer to specify the reference minibatch size; 
+          CNTK will scale the momentum internally so as to simulate the momentum decay of the specified minibatch 
+          size while the actual minibatch sizes of the fed data can vary. In this way, momentum values can be provided 
+          in a minibatch-size agnostic way (equal decay per sample). If minibatch_size is `None` (default), the momentum
+          is applied to the whole minibatch regardless of the actual minibatch sizes (not in a minibatch-size agnostic way).
 
     Examples:
         >>> # Use a fixed momentum of 0.99 for all samples
@@ -939,12 +938,12 @@ def adagrad(parameters, lr, need_ave_multiplier=True,
 
 @typemap
 def fsadagrad(parameters, lr, momentum, unit_gain=default_unit_gain_value(),
-              variance_momentum=momentum_as_time_constant_schedule(720000),
+              variance_momentum=momentum_schedule_per_sample(0.9999986111120757),
               l1_regularization_weight=0.0, l2_regularization_weight=0.0,
               gaussian_noise_injection_std_dev=0.0, gradient_clipping_threshold_per_sample=np.inf,
               gradient_clipping_with_truncation=True, use_mean_gradient=None,
               minibatch_size=None, epoch_size=None):
-    '''fsadagrad(parameters, lr, momentum, unit_gain=default_unit_gain_value(), variance_momentum=momentum_as_time_constant_schedule(720000), l1_regularization_weight=0, l2_regularization_weight=0, gaussian_noise_injection_std_dev=0, gradient_clipping_threshold_per_sample=np.inf, gradient_clipping_with_truncation=True)
+    '''fsadagrad(parameters, lr, momentum, unit_gain=default_unit_gain_value(), variance_momentum=momentum_schedule_per_sample(0.9999986111120757), l1_regularization_weight=0, l2_regularization_weight=0, gaussian_noise_injection_std_dev=0, gradient_clipping_threshold_per_sample=np.inf, gradient_clipping_with_truncation=True)
     Creates an FSAdaGrad learner instance to learn the parameters.
 
     Args:
@@ -956,8 +955,8 @@ def fsadagrad(parameters, lr, momentum, unit_gain=default_unit_gain_value(),
          For additional information, please refer to the :cntkwiki:`this CNTK Wiki article <BrainScript-SGD-Block#converting-learning-rate-and-momentum-parameters-from-other-toolkits>`.
         unit_gain: when ``True``, momentum is interpreted as a unit-gain filter. Defaults
          to the value returned by :func:`default_unit_gain_value`.
-        variance_momentum (float, list, output of :func:`momentum_schedule` or :func:`momentum_as_time_constant_schedule`): variance momentum schedule. Defaults
-         to ``momentum_as_time_constant_schedule(720000)``.
+        variance_momentum (float, list, output of :func:`momentum_schedule`): variance momentum schedule. Defaults
+         to ``momentum_schedule_per_sample(0.9999986111120757)``.
         l1_regularization_weight (float, optional): the L1 regularization weight per sample,
          defaults to 0.0
         l2_regularization_weight (float, optional): the L2 regularization weight per sample,
@@ -1013,12 +1012,12 @@ def fsadagrad(parameters, lr, momentum, unit_gain=default_unit_gain_value(),
 
 @typemap
 def adam(parameters, lr, momentum, unit_gain=default_unit_gain_value(),
-         variance_momentum=momentum_as_time_constant_schedule(720000),
+         variance_momentum=momentum_schedule_per_sample(0.9999986111120757),
          l1_regularization_weight=0.0, l2_regularization_weight=0.0,
          gaussian_noise_injection_std_dev=0.0, gradient_clipping_threshold_per_sample=np.inf,
          gradient_clipping_with_truncation=True, use_mean_gradient=None, epsilon=1e-8, adamax=False,
          minibatch_size=None, epoch_size=None):
-    '''adam(parameters, lr, momentum, unit_gain=default_unit_gain_value(), variance_momentum=momentum_as_time_constant_schedule(720000), l1_regularization_weight=0, l2_regularization_weight=0, gaussian_noise_injection_std_dev=0, gradient_clipping_threshold_per_sample=np.inf, gradient_clipping_with_truncation=True, epsilon=1e-8, adamax=False)
+    '''adam(parameters, lr, momentum, unit_gain=default_unit_gain_value(), variance_momentum=momentum_schedule_per_sample(0.9999986111120757), l1_regularization_weight=0, l2_regularization_weight=0, gaussian_noise_injection_std_dev=0, gradient_clipping_threshold_per_sample=np.inf, gradient_clipping_with_truncation=True, epsilon=1e-8, adamax=False)
     Creates an Adam learner instance to learn the parameters. See [1] for more
     information.
 
@@ -1031,8 +1030,8 @@ def adam(parameters, lr, momentum, unit_gain=default_unit_gain_value(),
          For additional information, please refer to the :cntkwiki:`this CNTK Wiki article <BrainScript-SGD-Block#converting-learning-rate-and-momentum-parameters-from-other-toolkits>`.
         unit_gain: when ``True``, momentum is interpreted as a unit-gain filter. Defaults
          to the value returned by :func:`default_unit_gain_value`.
-        variance_momentum (float, list, output of :func:`momentum_schedule` or :func:`momentum_as_time_constant_schedule`): variance momentum schedule. 
-         Note that this is the beta2 parameter in the Adam paper [1]. Defaults to ``momentum_as_time_constant_schedule(720000)``. 
+        variance_momentum (float, list, output of :func:`momentum_schedule`): variance momentum schedule. 
+         Note that this is the beta2 parameter in the Adam paper [1]. Defaults to ``momentum_schedule_per_sample(0.9999986111120757)``. 
         l1_regularization_weight (float, optional): the L1 regularization weight per sample,
          defaults to 0.0
         l2_regularization_weight (float, optional): the L2 regularization weight per sample,
