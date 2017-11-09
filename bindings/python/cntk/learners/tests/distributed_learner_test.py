@@ -32,7 +32,7 @@ def mpiexec_execute(script, mpiexec_params, params, timeout_seconds=TIMEOUT_SECO
 
 BlockMomentumConfig = collections.namedtuple('BlockMomentumConfig', 'block_momentum_as_time_constant block_learning_rate block_size distributed_after')
 DataParallelConfig = collections.namedtuple('DataParallelConfig', 'num_quantization_bits distributed_after')
-    
+   
 class SimpleTrainer:
     def __init__(self, mode, config):
         self.create_model()
@@ -74,7 +74,6 @@ class SimpleTrainer:
 
 def set_np_random_seed(rank, batch):
     np.random.seed(rank + 10 * batch)
-        
 
 def distributed_worker(outdir, gpu, mode, config, num_minibatches):
     if gpu:
@@ -98,7 +97,6 @@ def distributed_worker(outdir, gpu, mode, config, num_minibatches):
     # save a checkpoint to force sync after last minibatch
     trainer.trainer.save_checkpoint(os.path.join(outdir, mode+'_last'))
     np.save(os.path.join(outdir, mode+str(C.Communicator.rank())), trainer.p.value)
-
 
 TRAINING_SETTINGS = [
     ('data_parallel', None, False),
