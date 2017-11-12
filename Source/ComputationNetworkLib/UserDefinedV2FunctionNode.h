@@ -10,6 +10,10 @@
 #include "CNTKLibrary.h"
 #include "Utils.h"
 
+
+
+#include <iostream>
+
 namespace Microsoft { namespace MSR { namespace CNTK {
 
 template <typename ElemType>
@@ -24,9 +28,9 @@ class OutputMultiplexerNode;
 
 // TODO: We currently only support external nodes that cannot be part of CNTK recurrent loops
 template <class ElemType>
-class UserDefinedV2FunctionNode final : public ComputationNodeNonLooping<ElemType>, public MultiOutputNode<ElemType>
+class UserDefinedV2FunctionNode final : public ComputationNode<ElemType>, public MultiOutputNode<ElemType>
 {
-    typedef ComputationNodeNonLooping<ElemType> Base; UsingComputationNodeMembersBoilerplate;
+    typedef ComputationNode<ElemType> Base; UsingComputationNodeMembersBoilerplate;
     static const std::wstring TypeName() { return L"UserDefinedV2Function"; }
     
     friend class OutputMultiplexerNode<ElemType>;
@@ -45,8 +49,10 @@ public:
         return std::any_of(outputs.begin(), outputs.end(), [](const ::CNTK::Variable& output) { return output.Shape().HasFreeDimension(); });
     }
 
-    virtual void ForwardPropNonLooping() override
-    {
+    virtual void ForwardProp(const FrameRange& fr) override
+    {      
+        size_t rank = DetermineElementwiseTensorRank();
+        std::cout << "INOVKING UDF FORWARD PATH" << fr.IsAllFrames()<<std::endl;
         this->m_outputsValue[0] = m_value;
 
         // Get the arguments of the external function
@@ -56,13 +62,20 @@ public:
         size_t j = 0;
         for (size_t i = 0; i < numInputs; ++i)
         {
+          
+            auto input0 = InputRef(i).ValueTensorFor(rank, fr.AllowBroadcast());
+
+
+
             auto& input = InputRef(i);
             if (input.template Is<LearnableParameter<ElemType>>())
                 continue;
 
             auto argumentVar = arguments[j++];
+            auto inputValueForFrame = input.ValueFor(fr);
+
             auto argumentShape = ::CNTK::AsNDShape(input.GetSampleLayout());
-            auto argumentValue = ::CNTK::Utils::GetValueObjectFromCNTKImplMatrixAndMBLayout(argumentShape, argumentVar.DynamicAxes(), input.Value(), input.GetMBLayout());
+            auto argumentValue = ::CNTK::Utils::GetValueObjectFromCNTKImplMatrixAndMBLayout(argumentShape, argumentVar.DynamicAxes(), inputValueForFrame, input.GetMBLayout());
             argumentValues.insert(std::make_pair(argumentVar, argumentValue));
         }
         assert(j == arguments.size());
@@ -122,12 +135,16 @@ public:
         }
     }
 
-    virtual void BackpropToNonLooping(size_t /*inputIndex*/) override
+    virtual void BackpropTo(const size_t inputIndex, const FrameRange& fr) override
     {
+        // Forward is called for all inputs, but the framerange is given. Is it valid for all inputs?
+        // Backprop state has to come from forward. So do we need it to be for each input? inputIndex?
+
+
         if (m_currentBackpropStatePtr == nullptr)
             return;
 
-        this->m_outputsGradient[0] = m_gradient;
+        this->m_outputsGradient[0]->SetValue(GradientFor(fr));
 
         std::unordered_map<::CNTK::Variable, ::CNTK::ValuePtr> outputGradientValues;
         auto outputs = m_externalFunction->Outputs();
@@ -160,8 +177,9 @@ public:
         std::unordered_map<::CNTK::Variable, ::CNTK::ValuePtr> inputGradientValues;
         for (size_t i = 0; i < externalFunctionUniqueInputs.size(); ++i)
         {
+            //This is a BUGBUG i is not the same once we put into unique
             if (InputRef(i).NeedsGradient())
-                inputGradientValues.insert({ externalFunctionUniqueInputs[i], nullptr });
+                inputGradientValues.insert({ externalFunctionUniqueInputs[i], nullptr});
         }
 
         m_externalFunction->Backward(m_currentBackpropStatePtr, outputGradientValues, inputGradientValues);
@@ -182,7 +200,7 @@ public:
                 continue;
 
             auto newInputGradientMatrixAndLayout = ::CNTK::Utils::GetCNTKImplMatrixAndMBLayoutFromValueObject<ElemType>(input, inputGradientValue);
-            InputRef(i).Gradient() += *newInputGradientMatrixAndLayout.first;
+            InputRef(i).GradientFor(fr) += *newInputGradientMatrixAndLayout.first;
 
             if (*InputRef(i).GetMBLayout() != *newInputGradientMatrixAndLayout.second)
                 LogicError("The MBLayout 'NumSequences=%zu, NumTimeSteps=%zu' of the Input(%zu) gradient computed by the external function '%S' does not match the expected MBLayout 'NumSequences=%zu, NumTimeSteps=%zu'.",
