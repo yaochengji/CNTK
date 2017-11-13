@@ -16,7 +16,7 @@ from cntk.layers import Convolution2D, MaxPooling, AveragePooling, Dropout, Batc
 from cntk.layers.typing import *
 from cntk.io import MinibatchSource, ImageDeserializer, StreamDef, StreamDefs, INFINITELY_REPEAT
 from cntk import Trainer, use_default_device
-from cntk.learners import momentum_sgd, momentum_schedule_per_sample, learning_parameter_schedule, learning_parameter_schedule_per_sample
+from cntk.learners import momentum_sgd, momentum_schedule, momentum_schedule_per_sample, learning_parameter_schedule, learning_parameter_schedule_per_sample
 from cntk import cross_entropy_with_softmax, classification_error, relu
 from cntk.ops import Function
 from cntk.debugging import set_computation_network_trace_level
