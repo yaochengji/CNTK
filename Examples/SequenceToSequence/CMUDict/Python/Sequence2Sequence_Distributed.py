@@ -15,7 +15,7 @@ import cntk
 from cntk import Trainer
 from cntk.train.distributed import Communicator, data_parallel_distributed_learner, block_momentum_distributed_learner
 from cntk.io import MinibatchSource, CTFDeserializer, StreamDef, StreamDefs, INFINITELY_REPEAT, FULL_DATA_SWEEP
-from cntk.learners import fsadagrad, learning_parameter_schedule_per_sample, momentum_schedule
+from cntk.learners import fsadagrad, learning_parameter_schedule_per_sample, momentum_schedule, momentum_schedule_per_sample
 from cntk.train.training_session import *
 from cntk.logging import *
 
