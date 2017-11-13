@@ -51,8 +51,7 @@ public:
 
     virtual void ForwardProp(const FrameRange& fr) override
     {      
-        size_t rank = DetermineElementwiseTensorRank();
-        std::cout << "INOVKING UDF FORWARD PATH" << fr.IsAllFrames()<<std::endl;
+        std::cout << "INOVKING UDF FORWARD PATH 1" << fr.IsAllFrames()<<std::endl;
         this->m_outputsValue[0] = m_value;
 
         // Get the arguments of the external function
@@ -61,12 +60,7 @@ public:
         auto numInputs = GetNumInputs();
         size_t j = 0;
         for (size_t i = 0; i < numInputs; ++i)
-        {
-          
-            auto input0 = InputRef(i).ValueTensorFor(rank, fr.AllowBroadcast());
-
-
-
+        { 
             auto& input = InputRef(i);
             if (input.template Is<LearnableParameter<ElemType>>())
                 continue;
@@ -214,6 +208,9 @@ public:
 
     virtual void Validate(bool isFinalValidationPass) override
     {
+        //Check all the inputs and outputs to see if the inputs has the same dynamic axis as the output. That is the computation node we need to get the mblayout from. create new only if we cannot find this.
+
+
         Base::Validate(isFinalValidationPass);
 
         auto outputs = m_externalFunction->Outputs();
