@@ -632,8 +632,9 @@ void CNTKToONNXHelper::CopyAttributes(const FunctionPtr& src, ONNXIR::Node* node
             node->AddAttribute(attributesMap[L"dropoutRate"], dropoutRate);
             node->AddAttribute("is_test", (int64_t)1);
         }
-        else if ((src->OpName() == L"UniformRandom") || (src->OpName() == L"NormalRandom") ||
-                 (src->OpName() == L"UniformRandomLike") || (src->OpName() == L"NormalRandomLike"))
+        else if ((src->OpName() == L"RandomDistribution") ||
+            (src->OpName() == L"UniformRandom") || (src->OpName() == L"NormalRandom") || 
+            (src->OpName() == L"UniformRandomLike") || (src->OpName() == L"NormalRandomLike"))
         {
             auto randomArgs = AsVector<double>(src->Attributes()[L"randomDistributionArgs"].Value<std::vector<DictionaryValue>>());
             auto seed = (int64_t)src->Attributes()[L"rngSeed"].Value<int>();
