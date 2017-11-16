@@ -42,7 +42,7 @@ if 'CNTK_LIB_PATH' in os.environ:
 else:
     # Assumes GPU SKU is being built
     if IS_WINDOWS:
-        CNTK_LIB_PATH = os.path.join(CNTK_PATH, "x64", "Release_NoOpt")
+        CNTK_LIB_PATH = os.path.join(CNTK_PATH, "x64", "Release")
     else:
         CNTK_LIB_PATH = os.path.join(
             CNTK_PATH, "build", "gpu", "release", "lib")
