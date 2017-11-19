@@ -13,6 +13,8 @@
 #ifdef USE_MKL2017DNN
 
 #include "mkl_dnn.h"
+#include "mkl_cblas.h"
+#include "mkl_vml.h"
 
 namespace Microsoft { namespace MSR { namespace CNTK {
 
@@ -885,7 +887,7 @@ dnnError_t dnnReLUCreateForward(
     dnnPrimitive_t* pRelu,
     dnnPrimitiveAttributes_t attributes,
     const dnnLayout_t dataLayout,
-    float negativeSlope);
+    T negativeSlope);
 
 template<> inline
 dnnError_t dnnReLUCreateForward<float>(
@@ -902,7 +904,7 @@ dnnError_t dnnReLUCreateForward<double>(
     dnnPrimitive_t* pRelu,
     dnnPrimitiveAttributes_t attributes,
     const dnnLayout_t dataLayout,
-    float negativeSlope)
+    double negativeSlope)
 {
     return dnnReLUCreateForward_F64(pRelu, attributes, dataLayout, negativeSlope);
 }
@@ -913,7 +915,7 @@ dnnError_t dnnReLUCreateBackward(
     dnnPrimitiveAttributes_t attributes,
     const dnnLayout_t diffLayout,
     const dnnLayout_t dataLayout,
-    float negativeSlope);
+    T negativeSlope);
 
 template<> inline
 dnnError_t dnnReLUCreateBackward<float>(
@@ -933,7 +935,7 @@ dnnError_t dnnReLUCreateBackward<double>(
     dnnPrimitiveAttributes_t attributes,
     const dnnLayout_t diffLayout,
     const dnnLayout_t dataLayout,
-    float negativeSlope)
+    double negativeSlope)
 {
     return dnnReLUCreateBackward_F64(
         pRelu, attributes, diffLayout, dataLayout, negativeSlope);
@@ -945,9 +947,9 @@ dnnError_t dnnLRNCreateForward(
     dnnPrimitiveAttributes_t attributes,
     const dnnLayout_t dataLayout,
     size_t kernel_size,
-    float alpha,
-    float beta,
-    float k);
+    T alpha,
+    T beta,
+    T k);
 
 template<> inline
 dnnError_t dnnLRNCreateForward<float>(
@@ -969,9 +971,9 @@ dnnError_t dnnLRNCreateForward<double>(
     dnnPrimitiveAttributes_t attributes,
     const dnnLayout_t dataLayout,
     size_t kernel_size,
-    float alpha,
-    float beta,
-    float k)
+    double alpha,
+    double beta,
+    double k)
 {
     return dnnLRNCreateForward_F64(
         pLrn, attributes, dataLayout, kernel_size, alpha, beta, k);
@@ -984,9 +986,9 @@ dnnError_t dnnLRNCreateBackward(
     const dnnLayout_t diffLayout,
     const dnnLayout_t dataLayout,
     size_t kernel_size,
-    float alpha,
-    float beta,
-    float k);
+    T alpha,
+    T beta,
+    T k);
 
 template<> inline
 dnnError_t dnnLRNCreateBackward<float>(
@@ -1010,9 +1012,9 @@ dnnError_t dnnLRNCreateBackward<double>(
     const dnnLayout_t diffLayout,
     const dnnLayout_t dataLayout,
     size_t kernel_size,
-    float alpha,
-    float beta,
-    float k)
+    double alpha,
+    double beta,
+    double k)
 {
     return dnnLRNCreateBackward_F64(
         pLrn, attributes, diffLayout, dataLayout, kernel_size, alpha, beta, k);
@@ -1220,7 +1222,7 @@ dnnError_t dnnBatchNormalizationCreateForward(
     dnnPrimitive_t* pBatchNormalization,
     dnnPrimitiveAttributes_t attributes,
     const dnnLayout_t dataLayout,
-    float eps);
+    T eps);
 
 template<> inline
 dnnError_t dnnBatchNormalizationCreateForward<float>(
@@ -1237,7 +1239,7 @@ dnnError_t dnnBatchNormalizationCreateForward<double>(
     dnnPrimitive_t* pBatchNormalization,
     dnnPrimitiveAttributes_t attributes,
     const dnnLayout_t dataLayout,
-    float eps)
+    double eps)
 {
     return dnnBatchNormalizationCreateForward_F64(
         pBatchNormalization, attributes, dataLayout, eps);
@@ -1248,7 +1250,7 @@ dnnError_t dnnBatchNormalizationCreateBackwardData(
     dnnPrimitive_t* pBatchNormalization,
     dnnPrimitiveAttributes_t attributes,
     const dnnLayout_t dataLayout,
-    float eps);
+    T eps);
 
 template<> inline
 dnnError_t dnnBatchNormalizationCreateBackwardData<float>(
@@ -1266,7 +1268,7 @@ dnnError_t dnnBatchNormalizationCreateBackwardData<double>(
     dnnPrimitive_t* pBatchNormalization,
     dnnPrimitiveAttributes_t attributes,
     const dnnLayout_t dataLayout,
-    float eps)
+    double eps)
 {
     return dnnBatchNormalizationCreateBackwardData_F64(
         pBatchNormalization, attributes, dataLayout, eps);
@@ -1277,7 +1279,7 @@ dnnError_t dnnBatchNormalizationCreateBackwardScaleShift(
     dnnPrimitive_t* pBatchNormalization,
     dnnPrimitiveAttributes_t attributes,
     const dnnLayout_t dataLayout,
-    float eps);
+    T eps);
 
 template<> inline
 dnnError_t
@@ -1296,7 +1298,7 @@ dnnError_t
         dnnPrimitive_t* pBatchNormalization,
         dnnPrimitiveAttributes_t attributes,
         const dnnLayout_t dataLayout,
-        float eps)
+        double eps)
 {
     return dnnBatchNormalizationCreateBackwardScaleShift_F64(
         pBatchNormalization, attributes, dataLayout, eps);
@@ -1307,7 +1309,7 @@ dnnError_t dnnBatchNormalizationCreateForward_v2(
     dnnPrimitive_t* pBatchNormalization,
     dnnPrimitiveAttributes_t attributes,
     const dnnLayout_t dataLayout,
-    float eps,
+    T eps,
     unsigned int flags);
 
 template<> inline
@@ -1327,7 +1329,7 @@ dnnError_t dnnBatchNormalizationCreateForward_v2<double>(
     dnnPrimitive_t* pBatchNormalization,
     dnnPrimitiveAttributes_t attributes,
     const dnnLayout_t dataLayout,
-    float eps,
+    double eps,
     unsigned int flags)
 {
     return dnnBatchNormalizationCreateForward_v2_F64(
@@ -1339,7 +1341,7 @@ dnnError_t dnnBatchNormalizationCreateBackward_v2(
     dnnPrimitive_t* pBatchNormalization,
     dnnPrimitiveAttributes_t attributes,
     const dnnLayout_t dataLayout,
-    float eps,
+    T eps,
     unsigned int flags);
 
 template<> inline
@@ -1359,7 +1361,7 @@ dnnError_t dnnBatchNormalizationCreateBackward_v2<double>(
     dnnPrimitive_t* pBatchNormalization,
     dnnPrimitiveAttributes_t attributes,
     const dnnLayout_t dataLayout,
-    float eps,
+    double eps,
     unsigned int flags)
 {
     return dnnBatchNormalizationCreateBackward_v2_F64(
@@ -1518,6 +1520,21 @@ dnnError_t dnnInnerProductCreateBackwardBias<double>(
 {
     return dnnInnerProductCreateBackwardBias_F64(
         pInnerProduct, attributes, dimensions, srcSize);
+}
+
+template<typename T> inline
+void cblas_axpby(const MKL_INT n, const T alpha, const T* x, const T beta, T* y);
+
+template<> inline
+void cblas_axpby<float>(const MKL_INT n, const float alpha, const float* x, const float beta, float* y)
+{
+    cblas_saxpby(n, alpha, x, 1, beta, y, 1);
+}
+
+template<> inline
+void cblas_axpby<double>(const MKL_INT n, const double alpha, const double* x, const double beta, double* y)
+{
+    cblas_daxpby(n, alpha, x, 1, beta, y, 1);
 }
 
 inline void CHECK_MKL(dnnError_t err)

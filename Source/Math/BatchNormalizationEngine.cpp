@@ -6,6 +6,7 @@
 #include "stdafx.h"
 #include "BatchNormalizationEngine.h"
 #include "CuDnnFactories.h"
+#include "Mkl2017DnnCommon.h"
 
 namespace Microsoft { namespace MSR { namespace CNTK {
 
@@ -81,8 +82,8 @@ public:
 
 public:
     CntkBatchNormEngine(DEVICEID_TYPE deviceId, const TensorShape& inOutT,
-                        bool spatial, ImageLayoutKind imageLayout)
-                        : Base(deviceId, inOutT, spatial, imageLayout)
+        bool spatial, ImageLayoutKind imageLayout)
+        : Base(deviceId, inOutT, spatial, imageLayout)
     {
     }
 
@@ -99,19 +100,313 @@ protected:
     }
 
     void ForwardCore(const Mat& in, const Mat& scale, const Mat& bias, bool inferenceOnly, double expAvgFactor, double blendFactor, Mat& runMean, Mat& runVariance,
-                     Mat& out, double epsilon, Mat& savedMean, Mat& savedInvStdDev) override
+        Mat& out, double epsilon, Mat& savedMean, Mat& savedInvStdDev) override
     {
+#ifdef USE_MKL2017DNN
+        if (in.GetCurrentMatrixLocation() == CPU &&
+            ForwardCoreMKL(in, scale, bias, inferenceOnly, expAvgFactor, runMean, runVariance, out, epsilon, savedMean, savedInvStdDev))
+            return;
+#endif
+
         in.BatchNormalizationForward(scale, bias, inferenceOnly, expAvgFactor, blendFactor, runMean, runVariance, out, epsilon, savedMean, savedInvStdDev);
     }
 
     void BackwardCore(const Mat& in, const Mat& srcGrad, Mat& grad, const Mat& scale, double blendFactor, const Mat& savedMean, const Mat& savedInvStdDev,
-                      Mat& scaleGrad, Mat& biasGrad, bool accumulateDataGrad) override
+        Mat& scaleGrad, Mat& biasGrad, bool accumulateDataGrad) override
     {
+#ifdef USE_MKL2017DNN
+        if (srcGrad.GetCurrentMatrixLocation() == CPU &&
+            BackwardCoreMKL(in, srcGrad, grad, savedMean, savedInvStdDev, scaleGrad, biasGrad, accumulateDataGrad))
+            return;
+#endif
         if (!accumulateDataGrad)
             grad.SetValue((ElemType)0);
 
         srcGrad.BatchNormalizationBackward(in, grad, scale, blendFactor, savedMean, savedInvStdDev, scaleGrad, biasGrad);
     }
+
+private:
+#ifdef USE_MKL2017DNN
+    class MKLBatchNormalizationContext
+    {
+    public:
+        enum ContextIndex
+        {
+            ContextIndex_ForwardInfer = 0,
+            ContextIndex_ForwardTrain,
+            ContextIndex_Backward,
+            ContextIndex_Total
+        };
+
+    private:
+        int m_contextFlags = 0;
+
+        // MKL uses a single buffer for both scale and shift, so allocate a buffer and convert
+        template<typename ElemType>
+        struct MKLScaleShiftAdapter
+        {
+            bool isInput;
+            dnnLayout_t primLayout = nullptr;
+            ElemType* tempBuffer = nullptr;
+            dnnResourceType_t resourceType;
+
+            void Create(dnnLayout_t ltPrim, dnnResourceType_t rt, bool userToPrim)
+            {
+                Clear();
+                tempBuffer = nullptr;
+                primLayout = ltPrim;
+                isInput = userToPrim;
+                resourceType = rt;
+                CHECK_MKL(dnnAllocateBuffer<ElemType>((void**)&tempBuffer, ltPrim));
+            }
+
+            void PrepareForExecution(void* scale, void* bias, size_t numElements, void* resources[dnnResourceNumber])
+            {
+                resources[resourceType] = tempBuffer;
+                if (isInput)
+                {
+                    memcpy(tempBuffer, scale, sizeof(ElemType) * numElements);
+                    memcpy(tempBuffer + sizeof(ElemType) * numElements, bias, sizeof(ElemType) * numElements);
+                }
+            }
+
+            void ConvertOutput(void* scale, void* bias, size_t numElements)
+            {
+                if (isInput)
+                    RuntimeError("Cannot execute output ResourceAdapter for input");
+
+                memcpy(scale, tempBuffer, sizeof(ElemType) * numElements);
+                memcpy(bias, tempBuffer + sizeof(ElemType) * numElements, sizeof(ElemType) * numElements);
+            }
+
+            void Clear()
+            {
+                if (primLayout) { dnnLayoutDelete<ElemType>(primLayout); primLayout = nullptr; }
+                if (tempBuffer) { dnnReleaseBuffer<ElemType>(tempBuffer); tempBuffer = nullptr; }
+            }
+
+            ~MKLScaleShiftAdapter()
+            {
+                Clear();
+            }
+        };
+
+        struct PrimitiveContext
+        {
+            MKLDnnResourceAdapter<ElemType> input;
+            MKLDnnResourceAdapter<ElemType> output;
+            MKLScaleShiftAdapter<ElemType> scaleShift;
+
+            dnnPrimitive_t primitive = nullptr;
+            dnnPrimitiveAttributes_t attributes = nullptr;
+
+            void Clear()
+            {
+                if (primitive) { dnnDelete<ElemType>(primitive); primitive = nullptr; }
+                input.Clear();
+                scaleShift.Clear();
+                output.Clear();
+                if (attributes) { dnnPrimitiveAttributesDestroy<ElemType>(attributes); attributes = nullptr; }
+            }
+
+            ~PrimitiveContext()
+            {
+                Clear();
+            }
+        } m_context[ContextIndex_Total];
+
+        size_t m_numElementsPerSample;
+        size_t m_prevNumSamples;
+        ElemType m_epsilon;
+
+    public:
+        MKLBatchNormalizationContext() :
+            m_prevNumSamples(0),
+            m_numElementsPerSample(0),
+            m_epsilon(0)
+        {
+        }
+
+        bool Supported(bool spatial)
+        {
+            // MKL2017 Batch normalization only support spatial == False
+            return !spatial;
+        }
+
+        void Prepare(size_t numElementsPerSample, size_t numSamples, ContextIndex contextIndex, ElemType epsilon = 0)
+        {
+            int flag = (1 << contextIndex);
+            if (contextIndex == ContextIndex_Backward) epsilon = m_epsilon;
+
+            bool same = (numElementsPerSample == m_numElementsPerSample) && (numSamples == m_prevNumSamples) && (epsilon == m_epsilon);
+            if (same && !!(m_contextFlags & flag)) return;
+
+            if (!same)
+                m_contextFlags = 0;
+
+            if (m_contextFlags)
+            {
+                if (m_prevNumSamples != numSamples || m_epsilon != epsilon || m_numElementsPerSample != numElementsPerSample)
+                    RuntimeError("MKLBatchNormalizationContext: Inconsistent num samples between forward and backward");
+            }
+            else
+            {
+                m_numElementsPerSample = numElementsPerSample;
+                m_prevNumSamples = numSamples;
+                m_epsilon = epsilon;
+            }
+            m_contextFlags |= flag;
+
+            const size_t inoutDim = 4;
+            size_t inoutSizes[4] = { m_numElementsPerSample, 1, 1, m_prevNumSamples };
+            size_t inoutStrides[4] = { 1, m_numElementsPerSample, m_numElementsPerSample, m_numElementsPerSample };
+
+            auto& ctx = m_context[contextIndex];
+            ctx.Clear();
+
+            dnnLayout_t ltUserInput, ltPrimInput;
+            dnnLayout_t ltUserOutput, ltPrimOutput;
+            dnnLayout_t ltScaleShift;
+            dnnResourceType_t inputType;
+            dnnResourceType_t outputType;
+            dnnResourceType_t scaleShiftType;
+            switch (contextIndex)
+            {
+            case ContextIndex_ForwardInfer:
+            case ContextIndex_ForwardTrain:
+                CHECK_MKL(dnnLayoutCreate<ElemType>(&ltUserInput, inoutDim, inoutSizes, inoutStrides));
+                CHECK_MKL(dnnLayoutCreate<ElemType>(&ltUserOutput, inoutDim, inoutSizes, inoutStrides));
+                CHECK_MKL(dnnPrimitiveAttributesCreate<ElemType>(&ctx.attributes));
+                CHECK_MKL(dnnBatchNormalizationCreateForward_v2<ElemType>(
+                    &ctx.primitive,
+                    ctx.attributes,
+                    ltUserInput,
+                    m_epsilon,
+                    dnnUseScaleShift | ((contextIndex == ContextIndex_ForwardInfer) ? dnnUseInputMeanVariance : 0)));
+                inputType = dnnResourceSrc;
+                outputType = dnnResourceDst;
+                scaleShiftType = dnnResourceScaleShift;
+                break;
+            case ContextIndex_Backward:
+                CHECK_MKL(dnnLayoutCreate<ElemType>(&ltUserInput, inoutDim, inoutSizes, inoutStrides));
+                CHECK_MKL(dnnLayoutCreate<ElemType>(&ltUserOutput, inoutDim, inoutSizes, inoutStrides));
+                CHECK_MKL(dnnPrimitiveAttributesCreate<ElemType>(&ctx.attributes));
+                CHECK_MKL(dnnBatchNormalizationCreateBackward_v2<ElemType>(
+                    &ctx.primitive,
+                    ctx.attributes,
+                    ltUserInput,
+                    m_epsilon,
+                    dnnUseScaleShift | dnnUseInputMeanVariance));
+                inputType = dnnResourceDiffDst;
+                outputType = dnnResourceDiffSrc;
+                scaleShiftType = dnnResourceDiffScaleShift;
+                break;
+            default:
+                RuntimeError("Unexpected context type %d", (int)contextIndex);
+            }
+
+            CHECK_MKL(dnnLayoutCreateFromPrimitive<ElemType>(&ltPrimInput, ctx.primitive, inputType));
+            ctx.input.Create(ltUserInput, ltPrimInput, inputType, true);
+
+            CHECK_MKL(dnnLayoutCreateFromPrimitive<ElemType>(&ltPrimOutput, ctx.primitive, outputType));
+            ctx.output.Create(ltUserOutput, ltPrimOutput, outputType, false);
+
+            CHECK_MKL(dnnLayoutCreateFromPrimitive<ElemType>(&ltScaleShift, ctx.primitive, scaleShiftType));
+            ctx.scaleShift.Create(ltScaleShift, scaleShiftType, contextIndex != ContextIndex_Backward);
+        }
+
+        void Forward(void* input, void* output, void* scale, void* bias, void* runMean, void* runVariance, ContextIndex contextIndex)
+        {
+            auto& ctx = m_context[contextIndex];
+            void* resources[dnnResourceNumber] = { 0 };
+
+            ctx.input.PrepareForExecution(input, resources);
+            ctx.output.PrepareForExecution(output, resources);
+            ctx.scaleShift.PrepareForExecution(scale, bias, m_numElementsPerSample, resources);
+
+            resources[dnnResourceMean] = runMean;
+            resources[dnnResourceVariance] = runVariance;
+
+            CHECK_MKL(dnnExecute<ElemType>(ctx.primitive, resources));
+
+            ctx.output.ConvertOutput(output);
+        }
+
+        void Backward(void* in, void* srcGrad, void* grad, void* savedMean, void* savedVariance, void* scaleGrad, void* biasGrad)
+        {
+            auto& ctx = m_context[ContextIndex_Backward];
+            void* resources[dnnResourceNumber] = { 0 };
+
+            ctx.input.PrepareForExecution(srcGrad, resources);
+            ctx.output.PrepareForExecution(grad, resources);
+            ctx.scaleShift.PrepareForExecution(scaleGrad, biasGrad, m_numElementsPerSample, resources);
+
+            resources[dnnResourceSrc] = in;
+            resources[dnnResourceScaleShift] = m_context[ContextIndex_ForwardTrain].scaleShift.tempBuffer;
+            resources[dnnResourceMean] = savedMean;
+            resources[dnnResourceVariance] = savedVariance;
+
+            CHECK_MKL(dnnExecute<ElemType>(ctx.primitive, resources));
+
+            ctx.output.ConvertOutput(grad);
+            ctx.scaleShift.ConvertOutput(scaleGrad, biasGrad, m_numElementsPerSample);
+        }
+    };
+
+    MKLBatchNormalizationContext m_mklContext;
+    std::shared_ptr<Mat> m_dataGradWorkspace;
+
+    bool ForwardCoreMKL(const Mat& in, const Mat& scale, const Mat& bias, bool inferenceOnly, double expAvgFactor, Mat& runMean, Mat& runVariance,
+        Mat& out, double epsilon, Mat& savedMean, Mat& savedVariance)
+    {
+        if (!m_mklContext.Supported(m_spatial)) return false;
+
+        MKLBatchNormalizationContext::ContextIndex contextIndex = inferenceOnly ?
+            MKLBatchNormalizationContext::ContextIndex_ForwardInfer :
+            MKLBatchNormalizationContext::ContextIndex_ForwardTrain;
+        m_mklContext.Prepare(m_inOutT.GetNumElements(), in.GetNumCols(), contextIndex, (ElemType)epsilon);
+
+        if (!inferenceOnly)
+        {
+            savedMean.SetValue(runMean);
+            savedVariance.SetValue(runVariance);
+        }
+
+        m_mklContext.Forward(in.Data(), out.Data(), scale.Data(), bias.Data(), runMean.Data(), runVariance.Data(), contextIndex);
+
+        if (!inferenceOnly && expAvgFactor < 1.0)
+        {
+            ElemType OneMinusExpAvgFactor = (ElemType)(1.0 - expAvgFactor);
+            cblas_axpby((MKL_INT)runMean.GetNumElements(), OneMinusExpAvgFactor, savedMean.Data(), (ElemType)expAvgFactor, runMean.Data());
+            cblas_axpby((MKL_INT)runVariance.GetNumElements(), OneMinusExpAvgFactor, savedVariance.Data(), (ElemType)expAvgFactor, runVariance.Data());
+        }
+
+        return true;
+    }
+
+    bool BackwardCoreMKL(const Mat& in, const Mat& srcGrad, Mat& grad,
+        const Mat& savedMean, const Mat& savedVariance, Mat& scaleGrad, Mat& biasGrad, bool accumulateDataGrad)
+    {
+        if (!m_mklContext.Supported(m_spatial)) return false;
+
+        m_mklContext.Prepare(m_inOutT.GetNumElements(), srcGrad.GetNumCols(), MKLBatchNormalizationContext::ContextIndex_Backward);
+
+        if (accumulateDataGrad)
+        {
+            if (!m_dataGradWorkspace)
+                m_dataGradWorkspace = std::make_shared<Matrix<ElemType>>(0, 0, CPUDEVICE);
+
+            m_dataGradWorkspace->SetValue(grad);
+        }
+
+        m_mklContext.Backward(in.Data(), srcGrad.Data(), grad.Data(), savedMean.Data(), savedVariance.Data(), scaleGrad.Data(), biasGrad.Data());
+
+        if (accumulateDataGrad)
+            cblas_axpby((MKL_INT)grad.GetNumElements(), (ElemType)1.0, m_dataGradWorkspace->Data(), (ElemType)1.0, grad.Data());
+
+        return true;
+    }
+#endif
 };
 
 template class CntkBatchNormEngine<float>;

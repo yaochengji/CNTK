@@ -87,13 +87,13 @@ BOOST_AUTO_TEST_CASE(BatchNormalizationForward)
     };
 
     int baseDeviceId = 0;
-    for (int deviceId : {0})
+    for (int deviceId : {0, -1})
     {
         for (const auto& cfg : GenerateBNTestConfigs())
         {
             const auto& inOutT = std::get<0>(cfg);
             size_t batchSize = std::get<1>(cfg);
-            bool spatial = std::get<2>(cfg);
+            bool spatial = (deviceId == -1) ? true : std::get<2>(cfg); // CPU device can only do spatial
             double expAvg = std::get<3>(cfg);
             double blendFactor = 0; // cuDNN supports blendFactor == 0 (train) or 1 (eval) only.
             double eps = 1e-5; // CUDNN_BN_MIN_EPSILON
@@ -217,13 +217,13 @@ BOOST_AUTO_TEST_CASE(BatchNormalizationBackward)
     };
 
     int baseDeviceId = 0;
-    for (int deviceId : {0})
+    for (int deviceId : {0, -1})
     {
         for (const auto& cfg : GenerateBNTestConfigs())
         {
             const auto& inOutT = std::get<0>(cfg);
             size_t batchSize = std::get<1>(cfg);
-            bool spatial = std::get<2>(cfg);
+            bool spatial = (deviceId == -1) ? true : std::get<2>(cfg);
 
             auto engCudnn = BNEng::Create(baseDeviceId, inOutT, spatial, ImageLayoutKind::CHW, BatchNormEngineKind::CuDnn);
             auto engCntk = BNEng::Create(deviceId, inOutT, spatial, ImageLayoutKind::CHW, BatchNormEngineKind::Cntk);
