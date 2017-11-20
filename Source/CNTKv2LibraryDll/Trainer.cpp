@@ -238,7 +238,7 @@ namespace CNTK
         auto currentWorkerNumSamples = m_prevMinibatchNumSamples;
         auto prevTotalNumSamples = TotalNumberOfSamplesSeen();
 
-        MinibatchInfo info{ emptyMinibatch, sweepEnd, m_prevMinibatchNumSamples, trainingLoss, evalCriterion };
+        MinibatchInfo info{ arguments.empty(), sweepEnd, m_prevMinibatchNumSamples, trainingLoss, evalCriterion };
         bool updated = m_parameterLearners->Update(gradients, info);
         m_prevMinibatchNumSamples = info.numberOfSamples;
 

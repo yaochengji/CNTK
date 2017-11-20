@@ -69,20 +69,22 @@ class SimpleTrainer:
         return learner
 
     def train_minibatch(self, input_indices, batch_size):        
+        
+        data = C.Value.one_hot(input_indices, num_classes=self.input_dim)
+        self.trainer.train_minibatch(data)        
 
-        if batch_size != 0:
-            N = 5
-            #X = np.arange(3*N).reshape(N,3).astype(np.float32) # 6 rows of 3 values
-            X = input_indices
+        '''
+        if batch_size == 0:
+            N = 1
+            X = np.arange(20*N).reshape(N,20).astype(np.float32)
             s = C.io.MinibatchSourceFromData(dict(x=X), max_samples=len(X))
-            mb = s.next_minibatch(0) # get a minibatch of 3
-            d = mb[s.streams['x']]
-            print(X)
+            mb = s.next_minibatch(1) # get a minibatch of 3 
            
-            self.trainer.train_minibatch( d.data.asarray())
+            self.trainer.train_minibatch(s.next_minibatch(1))
         else:
             data = C.Value.one_hot(input_indices, num_classes=self.input_dim)
             self.trainer.train_minibatch(data)
+        '''
 
 def set_np_random_seed(rank, batch):
     np.random.seed(rank + 10 * batch)
@@ -98,7 +100,7 @@ def distributed_worker(outdir, gpu, mode, config, batch_size):
         C.cntk_py.use_sparse_gradient_aggregation_in_data_parallel_sgd(False)
     
     trainer = SimpleTrainer(mode, config)
-    for batch in range(NUM_BATCHES):
+    for batch in range(batch_size):
         set_np_random_seed(C.Communicator.rank(), batch)
         indices = (np.random.random((BATCH_SIZE_PER_WORKER,))*(trainer.input_dim-1)).astype(np.int)
         trainer.train_minibatch(indices, batch_size)
@@ -124,6 +126,7 @@ TRAINING_SETTINGS = [
     ('block_momentum', BlockMomentumConfig(block_momentum_as_time_constant=4000, block_learning_rate=2, block_size=NUM_WORKERS*BATCH_SIZE_PER_WORKER*3, distributed_after=NUM_WORKERS*BATCH_SIZE_PER_WORKER*2), True),
 ]
 
+'''
 @pytest.mark.parametrize("mode, config, minibatch_test", TRAINING_SETTINGS)
 def test_tmp(tmpdir, device_id, mode, config, minibatch_test):
     N = 1
@@ -140,7 +143,7 @@ def test_tmp(tmpdir, device_id, mode, config, minibatch_test):
 
     trainer = SimpleTrainer(mode, config)
     indices = (np.random.random((BATCH_SIZE_PER_WORKER,))*(trainer.input_dim-1)).astype(np.int)
-    print(indices)
+    print("INDECES" ,indices)
 
     data = C.Value.one_hot(indices, 1000)
     print(data)
@@ -191,7 +194,6 @@ def test_distributed_training_accuracy(tmpdir, device_id, mode, config, minibatc
         ref_trainer.train_minibatch(indices)
 
     assert np.allclose(p0, ref_trainer.p.value)
-'''
 
 #mpiexec entrance
 if __name__=='__main__':
@@ -210,7 +212,7 @@ if __name__=='__main__':
     
     batch_size = BATCH_SIZE_PER_WORKER
     if args['zerominibatch'] and C.Communicator.rank() == 1:
-        batch_size = 0       
+        batch_size = BATCH_SIZE_PER_WORKER
 
     distributed_worker(args['outputdir'], args['gpu'], args['mode'], config, batch_size)
     C.Communicator.finalize()
