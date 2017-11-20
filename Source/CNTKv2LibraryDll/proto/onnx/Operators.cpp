@@ -253,6 +253,7 @@ namespace ONNX
         // { L"", "Split" },
         { L"Slice", { {
             { L"Slice", "Slice" },
+            { L"axes", "axes" },
             { L"beginIndexVec", "starts" },
             { L"endIndexVec", "ends" },
         } } },
