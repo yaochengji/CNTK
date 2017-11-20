@@ -899,13 +899,7 @@ void CNTKToONNXHelper::CopyAttributes(const FunctionPtr& src, ONNXIR::Node* node
 
             node->AddAttribute("kernel_shape", ToINTS(kernelShape));
             node->AddAttribute("strides", ToINTS(strides));
-<<<<<<< HEAD
             PutAutopadOrPadAttrInNode(node, autoPadding, kernelShape);
-=======
-
-            auto padsValueVectorForONNX = GetONNXPadsAttributeFromCNTKNode(autoPadding, kernelShape);
-            node->AddAttribute("pads", ToINTS(padsValueVectorForONNX));
->>>>>>> liqun/Lotus2
         }
     }
 }
