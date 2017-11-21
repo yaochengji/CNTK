@@ -251,9 +251,9 @@ namespace CNTK
             return buffer;
         }
 
-        public void Save(string filepath)
+        public void Save(string filepath, ModelFormat format = ModelFormat.CNTKv2)
         {
-            this._Save(filepath);
+            this._Save(filepath, format);
         }
 
         /// <summary>
