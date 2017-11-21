@@ -93,7 +93,7 @@ BOOST_AUTO_TEST_CASE(BatchNormalizationForward)
         {
             const auto& inOutT = std::get<0>(cfg);
             size_t batchSize = std::get<1>(cfg);
-            bool spatial = (deviceId == -1) ? true : std::get<2>(cfg); // CPU device can only do spatial
+            bool spatial = (deviceId == -1) ? false : std::get<2>(cfg); // CPU device can only do non-spatial
             double expAvg = std::get<3>(cfg);
             double blendFactor = 0; // cuDNN supports blendFactor == 0 (train) or 1 (eval) only.
             double eps = 1e-5; // CUDNN_BN_MIN_EPSILON

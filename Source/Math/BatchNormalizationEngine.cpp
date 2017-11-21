@@ -146,27 +146,28 @@ private:
         struct MKLScaleShiftAdapter
         {
             bool isInput;
-            dnnLayout_t primLayout = nullptr;
-            ElemType* tempBuffer = nullptr;
+            std::shared_ptr<Matrix<ElemType>> mat;
             dnnResourceType_t resourceType;
 
-            void Create(dnnLayout_t ltPrim, dnnResourceType_t rt, bool userToPrim)
+            void Create(dnnResourceType_t rt, bool userToPrim, size_t numElements)
             {
                 Clear();
-                tempBuffer = nullptr;
-                primLayout = ltPrim;
+                mat = std::make_shared<Matrix<ElemType>>(numElements, 2, CPUDEVICE);
                 isInput = userToPrim;
                 resourceType = rt;
-                CHECK_MKL(dnnAllocateBuffer<ElemType>((void**)&tempBuffer, ltPrim));
             }
 
             void PrepareForExecution(void* scale, void* bias, size_t numElements, void* resources[dnnResourceNumber])
             {
-                resources[resourceType] = tempBuffer;
+                ElemType* buffer = mat->Data();
+                resources[resourceType] = buffer;
                 if (isInput)
                 {
-                    memcpy(tempBuffer, scale, sizeof(ElemType) * numElements);
-                    memcpy(tempBuffer + sizeof(ElemType) * numElements, bias, sizeof(ElemType) * numElements);
+                    for (size_t i = 0; i < numElements; i++)
+                    {
+                        buffer[2 * i] = ((ElemType*)scale)[i];
+                        buffer[2 * i + 1] = ((ElemType*)bias)[i];
+                    }
                 }
             }
 
@@ -175,14 +176,17 @@ private:
                 if (isInput)
                     RuntimeError("Cannot execute output ResourceAdapter for input");
 
-                memcpy(scale, tempBuffer, sizeof(ElemType) * numElements);
-                memcpy(bias, tempBuffer + sizeof(ElemType) * numElements, sizeof(ElemType) * numElements);
+                ElemType* buffer = mat->Data();
+                for (size_t i = 0; i < numElements; i++)
+                {
+                    ((ElemType*)scale)[i] = buffer[2 * i];
+                    ((ElemType*)bias)[i]  = buffer[2 * i + 1];
+                }
             }
 
             void Clear()
             {
-                if (primLayout) { dnnLayoutDelete<ElemType>(primLayout); primLayout = nullptr; }
-                if (tempBuffer) { dnnReleaseBuffer<ElemType>(tempBuffer); tempBuffer = nullptr; }
+                if (mat) mat.reset();
             }
 
             ~MKLScaleShiftAdapter()
@@ -266,7 +270,6 @@ private:
 
             dnnLayout_t ltUserInput, ltPrimInput;
             dnnLayout_t ltUserOutput, ltPrimOutput;
-            dnnLayout_t ltScaleShift;
             dnnResourceType_t inputType;
             dnnResourceType_t outputType;
             dnnResourceType_t scaleShiftType;
@@ -296,7 +299,7 @@ private:
                     ctx.attributes,
                     ltUserInput,
                     m_epsilon,
-                    dnnUseScaleShift | dnnUseInputMeanVariance));
+                    dnnUseScaleShift));
                 inputType = dnnResourceDiffDst;
                 outputType = dnnResourceDiffSrc;
                 scaleShiftType = dnnResourceDiffScaleShift;
@@ -311,8 +314,7 @@ private:
             CHECK_MKL(dnnLayoutCreateFromPrimitive<ElemType>(&ltPrimOutput, ctx.primitive, outputType));
             ctx.output.Create(ltUserOutput, ltPrimOutput, outputType, false);
 
-            CHECK_MKL(dnnLayoutCreateFromPrimitive<ElemType>(&ltScaleShift, ctx.primitive, scaleShiftType));
-            ctx.scaleShift.Create(ltScaleShift, scaleShiftType, contextIndex != ContextIndex_Backward);
+            ctx.scaleShift.Create(scaleShiftType, contextIndex != ContextIndex_Backward, m_numElementsPerSample);
         }
 
         void Forward(void* input, void* output, void* scale, void* bias, void* runMean, void* runVariance, ContextIndex contextIndex)
@@ -342,7 +344,7 @@ private:
             ctx.scaleShift.PrepareForExecution(scaleGrad, biasGrad, m_numElementsPerSample, resources);
 
             resources[dnnResourceSrc] = in;
-            resources[dnnResourceScaleShift] = m_context[ContextIndex_ForwardTrain].scaleShift.tempBuffer;
+            resources[dnnResourceScaleShift] = m_context[ContextIndex_ForwardTrain].scaleShift.mat->Data();
             resources[dnnResourceMean] = savedMean;
             resources[dnnResourceVariance] = savedVariance;
 
@@ -366,19 +368,22 @@ private:
             MKLBatchNormalizationContext::ContextIndex_ForwardTrain;
         m_mklContext.Prepare(m_inOutT.GetNumElements(), in.GetNumCols(), contextIndex, (ElemType)epsilon);
 
-        if (!inferenceOnly)
+        if (inferenceOnly)
         {
-            savedMean.SetValue(runMean);
-            savedVariance.SetValue(runVariance);
+            m_mklContext.Forward(in.Data(), out.Data(), scale.Data(), bias.Data(), runMean.Data(), runVariance.Data(), contextIndex);
         }
-
-        m_mklContext.Forward(in.Data(), out.Data(), scale.Data(), bias.Data(), runMean.Data(), runVariance.Data(), contextIndex);
-
-        if (!inferenceOnly && expAvgFactor < 1.0)
+        else
         {
+            savedMean.Resize(runMean);
+            savedVariance.Resize(runVariance);
+            m_mklContext.Forward(in.Data(), out.Data(), scale.Data(), bias.Data(), savedMean.Data(), savedVariance.Data(), contextIndex);
+
             ElemType OneMinusExpAvgFactor = (ElemType)(1.0 - expAvgFactor);
-            cblas_axpby((MKL_INT)runMean.GetNumElements(), OneMinusExpAvgFactor, savedMean.Data(), (ElemType)expAvgFactor, runMean.Data());
-            cblas_axpby((MKL_INT)runVariance.GetNumElements(), OneMinusExpAvgFactor, savedVariance.Data(), (ElemType)expAvgFactor, runVariance.Data());
+            // MKL does an unbiased estimation of variance in Sum((Xi - mean)^2) / (N - 1)
+            // while cuDNN does a biased estimation of variance in Sum((Xi - mean)^2) / N
+            ElemType varianceCorrection = (ElemType)(in.GetNumCols()) / (ElemType)(in.GetNumCols() - 1);
+            cblas_axpby((MKL_INT)runMean.GetNumElements(), (ElemType)expAvgFactor, savedMean.Data(), OneMinusExpAvgFactor, runMean.Data());
+            cblas_axpby((MKL_INT)runVariance.GetNumElements(), (ElemType)expAvgFactor * varianceCorrection, savedVariance.Data(), OneMinusExpAvgFactor, runVariance.Data());
         }
 
         return true;
