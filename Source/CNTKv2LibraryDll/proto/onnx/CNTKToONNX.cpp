@@ -6,6 +6,7 @@
 #include "CNTKToONNX.h"
 #include "proto/onnx/core/model.h"
 #include "proto/onnx/core/graph.h"
+#include "proto/onnx/core/status.h"
 
 #include "Utils.h"
 #include "Operators.h"
@@ -155,10 +156,14 @@ private:
     static ONNXIR::Node* AddNode(const FunctionPtr& src, ONNXIR::Graph* graph, const std::vector<ONNXIR::NodeArg>& inputs, const std::vector<ONNXIR::NodeArg>& outputs);
 
     //
-    // Get ONNX 'auto_pad' attribute value based on CNTK node's autoPadding attribute value.
+    // Get ONNX 'pads' attribute value based on CNTK node's autoPadding attribute value.
     //
-    static void GetONNXPadAttributesFromCNTKNode(string& onnxAutoPad, std::vector<int>& padsValueVector,
-        const std::vector<bool>& cntkAutoPadding, const NDShape& kernelShape);
+    static std::pair<std::vector<int>, std::vector<int> > GetONNXPadsAttributeFromCNTKNode(const std::vector<bool>& cntkAutoPadding, const NDShape& kernelShape);
+
+    //
+    // Adds attributes 'auto_pad' or 'pads' to saved node (typically convolution or pooling).
+    //
+    static void PutAutopadOrPadAttrInNode(ONNXIR::Node* node, const std::vector<bool>& autoPadding, const NDShape& kernelShape);
 };
 }
 
@@ -167,9 +172,9 @@ std::unique_ptr<ONNXIR::Model> CNTKToONNX::CreateModel(const FunctionPtr& src)
     std::unique_ptr<ONNXIR::Model> model(new ONNXIR::Model("CNTKGraph", true));
     auto dstGraph = model->MainGraph();
     CNTKToONNXHelper::Copy(src, dstGraph);
-    ONNXIR::Status status = dstGraph->Resolve();
+    ONNXIR::Common::Status status = dstGraph->Resolve();
     if (!status.Ok())
-        LogicError("%s", status.ErrorMsg().c_str());
+        LogicError("%s", status.ErrorMessage().c_str());
     model->SetIrVersion(static_cast<ONNXIR::VERSION>(CNTK_ONNX_MODEL_VERSION));
     return model;
 }
@@ -243,7 +248,7 @@ int CNTKToONNXHelper::ToIndex(const Axis& axis)
     if (axis.IsBatchAxis())
         return 0;
  
-    return axis.StaticAxisIndex() + 1;
+    return axis.StaticAxisIndex();
 }
 
 ONNXIR::TypeProto CNTKToONNXHelper::ToTypeProto(const NDShape& shape, bool hasBatchAxis)
@@ -671,7 +676,7 @@ void CNTKToONNXHelper::CopyAttributes(const FunctionPtr& src, ONNXIR::Node* node
             node->AddAttribute(attributesMap[L"reductionKeepDimensions"], keepReducedDimensions);
             node->AddAttribute("axes", ToINTS(reductionAxes));
         }
-        else if (src->OpName() == L"Transpose")
+        else if (src->OpName() == L"TransposeAxes")
         {
             std::vector<Axis> perm = AsVector<Axis>(src->Attributes()[L"axisVec"].Value<std::vector<DictionaryValue>>());
             node->AddAttribute(attributesMap[L"axisVec"], ToINTS(perm));
@@ -706,8 +711,8 @@ void CNTKToONNXHelper::CopyAttributes(const FunctionPtr& src, ONNXIR::Node* node
             }
 
             node->AddAttribute(attributesMap[L"axes"], ToINTS(sliceAxes));
-            node->AddAttribute(attributesMap[L"starts"], ToINTS(beginIndex));
-            node->AddAttribute(attributesMap[L"ends"], ToINTS(endIndex));
+            node->AddAttribute(attributesMap[L"beginIndexVec"], ToINTS(beginIndex));
+            node->AddAttribute(attributesMap[L"endIndexVec"], ToINTS(endIndex));
         }
         else if (src->OpName() == L"Softmax")
         {
@@ -748,16 +753,12 @@ void CNTKToONNXHelper::CopyAttributes(const FunctionPtr& src, ONNXIR::Node* node
             autoPadding.pop_back();
             dilations = dilations.SubShape(0, dilations.Rank() - 1);
 
-            string autoPadForONNX;
-            std::vector<int> padsValueVectorForONNX;
-            GetONNXPadAttributesFromCNTKNode(autoPadForONNX, padsValueVectorForONNX, autoPadding, kernelShape);
-
             node->AddAttribute("kernel_shape", ToINTS(kernelShape));
             node->AddAttribute("strides", ToINTS(strides));
-            node->AddAttribute("auto_pad", autoPadForONNX);
-            node->AddAttribute("pads", ToINTS(padsValueVectorForONNX, false));
             node->AddAttribute("dilations", ToINTS(dilations));
             node->AddAttribute("group", (int64_t)1);
+
+            PutAutopadOrPadAttrInNode(node, autoPadding, kernelShape);
 
             if (transpose)
             {
@@ -769,13 +770,37 @@ void CNTKToONNXHelper::CopyAttributes(const FunctionPtr& src, ONNXIR::Node* node
         {
             auto kernelShape = (NDShape)src->Attributes()[L"poolingWindowShape"].Value<NDShape>();
             auto strides = (NDShape)src->Attributes()[L"strides"].Value<NDShape>();
+            if (strides.Rank() < kernelShape.Rank())
+            {
+                strides = strides.AppendShape(NDShape(std::vector<size_t>(kernelShape.Rank() - strides.Rank(), 1)));
+            }
             auto autoPadding = AsVector<bool>(src->Attributes()[L"autoPadding"].Value<std::vector<DictionaryValue>>());
 
             node->AddAttribute("kernel_shape", ToINTS(kernelShape));
             node->AddAttribute("strides", ToINTS(strides));
-            node->AddAttribute("pads", ToINTS(autoPadding));
+            PutAutopadOrPadAttrInNode(node, autoPadding, kernelShape);
         }
     }
+}
+
+void CNTKToONNXHelper::PutAutopadOrPadAttrInNode(ONNXIR::Node* node, const std::vector<bool>& autoPadding, const NDShape& kernelShape)
+{
+    // Based on the CNTK node choose to put either the auto_pad or pads attribute in the ONNX node.
+
+    // ONNX spec says that if 'pads' attributes is specified then 'VALID'
+    // for 'auto_pad' is implied, and 'auto_pad' attribute should not (must not)
+    // be explicitly specified/set.
+    bool isExplicitPadValueNeeded = std::find(autoPadding.begin(), autoPadding.end(), false) != autoPadding.end();
+    if (isExplicitPadValueNeeded)
+    {
+        auto padsValueVectorsForONNX = GetONNXPadsAttributeFromCNTKNode(autoPadding, kernelShape);
+        auto lowerPads = ToINTS(padsValueVectorsForONNX.first);
+        auto upperPads = ToINTS(padsValueVectorsForONNX.second);
+        lowerPads.insert(lowerPads.end(), upperPads.cbegin(), upperPads.cend());
+        node->AddAttribute("pads", lowerPads);
+    }
+    else
+        node->AddAttribute("auto_pad", "SAME_UPPER");
 }
 
 std::vector<ONNXIR::NodeArg> CNTKToONNXHelper::MapInputsOrderToONNX(const FunctionPtr& src, const std::vector<ONNXIR::NodeArg>& inputs)
@@ -855,29 +880,23 @@ ONNXIR::Node* CNTKToONNXHelper::AddNode(const FunctionPtr& src, ONNXIR::Graph* g
     return node;
 }
 
-void CNTKToONNXHelper::GetONNXPadAttributesFromCNTKNode(string& onnxAutoPad, std::vector<int>& padsValueVector, 
-    const std::vector<bool>& cntkAutoPadding, const NDShape& kernelShape)
+std::pair<std::vector<int>, std::vector<int> > CNTKToONNXHelper::GetONNXPadsAttributeFromCNTKNode(const std::vector<bool>& cntkAutoPadding, const NDShape& kernelShape)
 {
-    // Figure out the values for 'auto_pad' and 'pads' ONNX attributes.
+    // Figure out the value for 'pads' ONNX attribute.
 
-    // It is assumed that at this point 'autoPadding' has (boolean) values for only 'real' dimensions 
-    // and no channel/depth or batch dimensions. Therefore, if all the elements of autoPadding are 
-    // true then we need to set autoPad to SAME_UPPER. Even if one of the elements is false, then we
-    // set autoPad to VALID and we need to compute the entries for 'pads' attribute (padsValueVector) 
-    // for the dimensions for which autoPadding is true. In a nutshell, even if one of the dimensions
-    // in autoPadding is false, then we need to use VALID for autoPad and find the appropriate padding
-    // for dimensions that are true.
-    bool isExplicitPadValueNeeded = std::find(cntkAutoPadding.begin(), cntkAutoPadding.end(), false) != cntkAutoPadding.end();
-    onnxAutoPad = isExplicitPadValueNeeded ? "VALID" : "SAME_UPPER";
-    padsValueVector.insert(padsValueVector.begin(),2 * kernelShape.Rank(), 0);
-    if (isExplicitPadValueNeeded)
+    // Only one of the two ONNX conv attributes, auto_pad and pads, can be specified in the saved model. 
+    // It is assumed at this point that we need an explicit padding vector, pads, and not the auto_pad attribute. 
+    // The 'auto_pad' atrribute is implied to be 'VALID' by ONNX specification if the 'pads' attribute is specified
+    // (padsValueVector) for the dimensions for which cntkAutoPadding is true.
+    assert(kernelShape.Rank() == cntkAutoPadding.size());
+    std::vector<int> padsValueVectorLower(kernelShape.Rank(), 0);
+    std::vector<int> padsValueVectorUpper(kernelShape.Rank(), 0);
+    for (size_t i = 0; i < cntkAutoPadding.size(); ++i)
     {
-        for (size_t i = 0; i < cntkAutoPadding.size(); ++i)
-        {
-            if (!cntkAutoPadding[i]) continue;
-            auto q = kernelShape[i] / 2;
-            padsValueVector[i * 2] = kernelShape[i] % 2 ? q : (q - 1);
-            padsValueVector[i * 2 + 1] = q;
-        }
+        if (!cntkAutoPadding[i]) continue;
+        auto q = kernelShape[i] / 2;
+        padsValueVectorLower[i] = kernelShape[i] % 2 ? q : (q - 1);
+        padsValueVectorUpper[i] = q;
     }
+    return std::make_pair(padsValueVectorLower, padsValueVectorUpper);
 }
