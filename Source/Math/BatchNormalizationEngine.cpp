@@ -130,22 +130,20 @@ private:
     // default epsilon that matches cuDNN when no forward executed
     #define DEFAULT_EPSILON 1e-5
 
+    enum ContextIndex
+    {
+        ContextIndex_ForwardInfer = 0,
+        ContextIndex_ForwardTrain,
+        ContextIndex_Backward,
+        ContextIndex_Total
+    };
+
     class MKLBatchNormalizationContext
     {
-    public:
-        enum ContextIndex
-        {
-            ContextIndex_ForwardInfer = 0,
-            ContextIndex_ForwardTrain,
-            ContextIndex_Backward,
-            ContextIndex_Total
-        };
-
     private:
         int m_contextFlags = 0;
 
         // MKL uses a single buffer for both scale and shift, so allocate a buffer and convert
-        template<typename ElemType>
         struct MKLScaleShiftAdapter
         {
             bool isInput;
@@ -198,7 +196,7 @@ private:
         {
             MKLDnnResourceAdapter<ElemType> input;
             MKLDnnResourceAdapter<ElemType> output;
-            MKLScaleShiftAdapter<ElemType> scaleShift;
+            MKLScaleShiftAdapter scaleShift;
             std::shared_ptr<Mat> varianceMat; // variance matrix used for converting InvStdDev
 
             dnnPrimitive_t primitive = nullptr;
@@ -389,9 +387,9 @@ private:
     {
         if (!m_mklContext.Supported(m_spatial)) return false;
 
-        MKLBatchNormalizationContext::ContextIndex contextIndex = inferenceOnly ?
-            MKLBatchNormalizationContext::ContextIndex_ForwardInfer :
-            MKLBatchNormalizationContext::ContextIndex_ForwardTrain;
+        ContextIndex contextIndex = inferenceOnly ?
+            ContextIndex_ForwardInfer :
+            ContextIndex_ForwardTrain;
         m_mklContext.Prepare(m_inOutT, in.GetNumCols(), contextIndex, (ElemType)epsilon);
 
         if (inferenceOnly)
@@ -428,7 +426,7 @@ private:
     {
         if (!m_mklContext.Supported(m_spatial)) return false;
 
-        m_mklContext.Prepare(m_inOutT, srcGrad.GetNumCols(), MKLBatchNormalizationContext::ContextIndex_Backward);
+        m_mklContext.Prepare(m_inOutT, srcGrad.GetNumCols(), ContextIndex_Backward);
 
         if (accumulateDataGrad)
         {
