@@ -14,7 +14,6 @@
 
 #include "mkl_dnn.h"
 #include "mkl_cblas.h"
-#include "mkl_vml.h"
 
 namespace Microsoft { namespace MSR { namespace CNTK {
 
