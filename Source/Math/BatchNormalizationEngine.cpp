@@ -116,7 +116,7 @@ protected:
     {
 #ifdef USE_MKL2017DNN
         if (srcGrad.GetCurrentMatrixLocation() == CPU &&
-            BackwardCoreMKL(in, srcGrad, grad, savedMean, savedInvStdDev, scaleGrad, biasGrad, accumulateDataGrad))
+            BackwardCoreMKL(in, srcGrad, grad, scale, savedMean, savedInvStdDev, scaleGrad, biasGrad, accumulateDataGrad))
             return;
 #endif
         if (!accumulateDataGrad)
@@ -127,6 +127,9 @@ protected:
 
 private:
 #ifdef USE_MKL2017DNN
+    // default epsilon that matches cuDNN when no forward executed
+    #define DEFAULT_EPSILON 1e-5
+
     class MKLBatchNormalizationContext
     {
     public:
@@ -148,40 +151,36 @@ private:
             bool isInput;
             std::shared_ptr<Matrix<ElemType>> mat;
             dnnResourceType_t resourceType;
+            size_t numChannels;
 
-            void Create(dnnResourceType_t rt, bool userToPrim, size_t numElements)
+            void Create(dnnResourceType_t rt, bool userToPrim, size_t n)
             {
                 Clear();
-                mat = std::make_shared<Matrix<ElemType>>(numElements, 2, CPUDEVICE);
+                numChannels = n;
+                mat = std::make_shared<Matrix<ElemType>>(numChannels, 2, CPUDEVICE);
                 isInput = userToPrim;
                 resourceType = rt;
             }
 
-            void PrepareForExecution(void* scale, void* bias, size_t numElements, void* resources[dnnResourceNumber])
+            void PrepareForExecution(void* scale, void* bias, void* resources[dnnResourceNumber])
             {
                 ElemType* buffer = mat->Data();
                 resources[resourceType] = buffer;
                 if (isInput)
                 {
-                    for (size_t i = 0; i < numElements; i++)
-                    {
-                        buffer[2 * i] = ((ElemType*)scale)[i];
-                        buffer[2 * i + 1] = ((ElemType*)bias)[i];
-                    }
+                    memcpy(buffer, scale, sizeof(ElemType) * numChannels);
+                    memcpy(buffer + numChannels, bias, sizeof(ElemType) * numChannels);
                 }
             }
 
-            void ConvertOutput(void* scale, void* bias, size_t numElements)
+            void ConvertOutput(void* scale, void* bias)
             {
                 if (isInput)
                     RuntimeError("Cannot execute output ResourceAdapter for input");
 
                 ElemType* buffer = mat->Data();
-                for (size_t i = 0; i < numElements; i++)
-                {
-                    ((ElemType*)scale)[i] = buffer[2 * i];
-                    ((ElemType*)bias)[i]  = buffer[2 * i + 1];
-                }
+                memcpy(scale, buffer, sizeof(ElemType) * numChannels);
+                memcpy(bias, buffer + numChannels, sizeof(ElemType) * numChannels);
             }
 
             void Clear()
@@ -200,6 +199,7 @@ private:
             MKLDnnResourceAdapter<ElemType> input;
             MKLDnnResourceAdapter<ElemType> output;
             MKLScaleShiftAdapter<ElemType> scaleShift;
+            std::shared_ptr<Mat> varianceMat; // variance matrix used for converting InvStdDev
 
             dnnPrimitive_t primitive = nullptr;
             dnnPrimitiveAttributes_t attributes = nullptr;
@@ -219,30 +219,37 @@ private:
             }
         } m_context[ContextIndex_Total];
 
-        size_t m_numElementsPerSample;
-        size_t m_prevNumSamples;
+        TensorShape m_shape;
+        size_t m_numSamples;
         ElemType m_epsilon;
 
     public:
         MKLBatchNormalizationContext() :
-            m_prevNumSamples(0),
-            m_numElementsPerSample(0),
+            m_numSamples(0),
             m_epsilon(0)
         {
         }
 
-        bool Supported(bool spatial)
+        bool Supported(bool spatial) const
         {
-            // MKL2017 Batch normalization only support spatial == False
-            return !spatial;
+            // MKL2017 Batch normalization only support spatial
+            return spatial;
         }
 
-        void Prepare(size_t numElementsPerSample, size_t numSamples, ContextIndex contextIndex, ElemType epsilon = 0)
+        bool HasPreparedFor(ContextIndex contextIndex) const
+        {
+            return !!(m_contextFlags & (1 << contextIndex));
+        }
+
+        void Prepare(const TensorShape& shape, size_t numSamples, ContextIndex contextIndex, ElemType epsilon = 0)
         {
             int flag = (1 << contextIndex);
-            if (contextIndex == ContextIndex_Backward) epsilon = m_epsilon;
+            if (contextIndex == ContextIndex_Backward)
+            {
+                epsilon = HasPreparedFor(ContextIndex_ForwardTrain) ? m_epsilon : (ElemType)DEFAULT_EPSILON;
+            }
 
-            bool same = (numElementsPerSample == m_numElementsPerSample) && (numSamples == m_prevNumSamples) && (epsilon == m_epsilon);
+            bool same = (shape == m_shape) && (numSamples == m_numSamples) && (epsilon == m_epsilon);
             if (same && !!(m_contextFlags & flag)) return;
 
             if (!same)
@@ -250,20 +257,26 @@ private:
 
             if (m_contextFlags)
             {
-                if (m_prevNumSamples != numSamples || m_epsilon != epsilon || m_numElementsPerSample != numElementsPerSample)
+                if ((m_numSamples != numSamples) || (m_epsilon != epsilon) || (m_shape != shape))
                     RuntimeError("MKLBatchNormalizationContext: Inconsistent num samples between forward and backward");
             }
             else
             {
-                m_numElementsPerSample = numElementsPerSample;
-                m_prevNumSamples = numSamples;
+                m_shape = shape;
+                m_numSamples = numSamples;
                 m_epsilon = epsilon;
             }
             m_contextFlags |= flag;
 
             const size_t inoutDim = 4;
-            size_t inoutSizes[4] = { m_numElementsPerSample, 1, 1, m_prevNumSamples };
-            size_t inoutStrides[4] = { 1, m_numElementsPerSample, m_numElementsPerSample, m_numElementsPerSample };
+            size_t rank = m_shape.GetRank();
+            size_t numElements = m_shape.GetNumElements();
+            size_t numChannels = (rank > 0) ? m_shape.GetDim(rank - 1) : 1;
+            size_t numPixels = numElements / numChannels;
+            size_t dimFirst = (rank > 1) ? m_shape.GetDim(0) : 1;
+            size_t dimSecond = numPixels / dimFirst;
+            size_t inoutSizes[4] = { dimFirst, dimSecond, numChannels, m_numSamples };
+            size_t inoutStrides[4] = { 1, dimFirst, numPixels, numElements };
 
             auto& ctx = m_context[contextIndex];
             ctx.Clear();
@@ -303,6 +316,7 @@ private:
                 inputType = dnnResourceDiffDst;
                 outputType = dnnResourceDiffSrc;
                 scaleShiftType = dnnResourceDiffScaleShift;
+                ctx.varianceMat = std::make_shared<Mat>(numChannels, 1, CPUDEVICE);
                 break;
             default:
                 RuntimeError("Unexpected context type %d", (int)contextIndex);
@@ -314,7 +328,7 @@ private:
             CHECK_MKL(dnnLayoutCreateFromPrimitive<ElemType>(&ltPrimOutput, ctx.primitive, outputType));
             ctx.output.Create(ltUserOutput, ltPrimOutput, outputType, false);
 
-            ctx.scaleShift.Create(scaleShiftType, contextIndex != ContextIndex_Backward, m_numElementsPerSample);
+            ctx.scaleShift.Create(scaleShiftType, contextIndex != ContextIndex_Backward, numChannels);
         }
 
         void Forward(void* input, void* output, void* scale, void* bias, void* runMean, void* runVariance, ContextIndex contextIndex)
@@ -324,7 +338,7 @@ private:
 
             ctx.input.PrepareForExecution(input, resources);
             ctx.output.PrepareForExecution(output, resources);
-            ctx.scaleShift.PrepareForExecution(scale, bias, m_numElementsPerSample, resources);
+            ctx.scaleShift.PrepareForExecution(scale, bias, resources);
 
             resources[dnnResourceMean] = runMean;
             resources[dnnResourceVariance] = runVariance;
@@ -334,24 +348,36 @@ private:
             ctx.output.ConvertOutput(output);
         }
 
-        void Backward(void* in, void* srcGrad, void* grad, void* savedMean, void* savedVariance, void* scaleGrad, void* biasGrad)
+        void Backward(void* in, void* srcGrad, void* grad, void* scale, void* savedMean, void* savedInvStdDev, void* scaleGrad, void* biasGrad)
         {
             auto& ctx = m_context[ContextIndex_Backward];
             void* resources[dnnResourceNumber] = { 0 };
 
             ctx.input.PrepareForExecution(srcGrad, resources);
             ctx.output.PrepareForExecution(grad, resources);
-            ctx.scaleShift.PrepareForExecution(scaleGrad, biasGrad, m_numElementsPerSample, resources);
+            ctx.scaleShift.PrepareForExecution(scaleGrad, biasGrad, resources);
+
+            std::shared_ptr<Mat> scaleShiftMat;
+            scaleShiftMat = std::make_shared<Mat>(ctx.scaleShift.numChannels, 2, CPUDEVICE);
+            memcpy(scaleShiftMat->Data(), scale, ctx.scaleShift.numChannels * sizeof(ElemType));
+            resources[dnnResourceScaleShift] = scaleShiftMat->Data();
+
+            // convert from InvStdDev to variance
+            for (size_t i = 0; i < ctx.scaleShift.numChannels; i++)
+            {
+                ElemType& v = ctx.varianceMat->Data()[i];
+                ElemType& s = ((ElemType*)savedInvStdDev)[i];
+                v = (1 / (s * s) - m_epsilon);
+            }
 
             resources[dnnResourceSrc] = in;
-            resources[dnnResourceScaleShift] = m_context[ContextIndex_ForwardTrain].scaleShift.mat->Data();
             resources[dnnResourceMean] = savedMean;
-            resources[dnnResourceVariance] = savedVariance;
+            resources[dnnResourceVariance] = ctx.varianceMat->Data();
 
             CHECK_MKL(dnnExecute<ElemType>(ctx.primitive, resources));
 
             ctx.output.ConvertOutput(grad);
-            ctx.scaleShift.ConvertOutput(scaleGrad, biasGrad, m_numElementsPerSample);
+            ctx.scaleShift.ConvertOutput(scaleGrad, biasGrad);
         }
     };
 
@@ -359,14 +385,14 @@ private:
     std::shared_ptr<Mat> m_dataGradWorkspace;
 
     bool ForwardCoreMKL(const Mat& in, const Mat& scale, const Mat& bias, bool inferenceOnly, double expAvgFactor, Mat& runMean, Mat& runVariance,
-        Mat& out, double epsilon, Mat& savedMean, Mat& savedVariance)
+        Mat& out, double epsilon, Mat& savedMean, Mat& savedInvStdDev)
     {
         if (!m_mklContext.Supported(m_spatial)) return false;
 
         MKLBatchNormalizationContext::ContextIndex contextIndex = inferenceOnly ?
             MKLBatchNormalizationContext::ContextIndex_ForwardInfer :
             MKLBatchNormalizationContext::ContextIndex_ForwardTrain;
-        m_mklContext.Prepare(m_inOutT.GetNumElements(), in.GetNumCols(), contextIndex, (ElemType)epsilon);
+        m_mklContext.Prepare(m_inOutT, in.GetNumCols(), contextIndex, (ElemType)epsilon);
 
         if (inferenceOnly)
         {
@@ -375,26 +401,34 @@ private:
         else
         {
             savedMean.Resize(runMean);
-            savedVariance.Resize(runVariance);
-            m_mklContext.Forward(in.Data(), out.Data(), scale.Data(), bias.Data(), savedMean.Data(), savedVariance.Data(), contextIndex);
+            savedInvStdDev.Resize(runVariance);
+            m_mklContext.Forward(in.Data(), out.Data(), scale.Data(), bias.Data(), savedMean.Data(), savedInvStdDev.Data(), contextIndex);
 
+            // update savedMean, savedInvStdDev
             ElemType OneMinusExpAvgFactor = (ElemType)(1.0 - expAvgFactor);
-            // MKL does an unbiased estimation of variance in Sum((Xi - mean)^2) / (N - 1)
-            // while cuDNN does a biased estimation of variance in Sum((Xi - mean)^2) / N
-            ElemType varianceCorrection = (ElemType)(in.GetNumCols()) / (ElemType)(in.GetNumCols() - 1);
             cblas_axpby((MKL_INT)runMean.GetNumElements(), (ElemType)expAvgFactor, savedMean.Data(), OneMinusExpAvgFactor, runMean.Data());
-            cblas_axpby((MKL_INT)runVariance.GetNumElements(), (ElemType)expAvgFactor * varianceCorrection, savedVariance.Data(), OneMinusExpAvgFactor, runVariance.Data());
+
+            // note savedInvStdDev currently hold variance of in.Data(), need to convert to InvStdDev and interpolate
+            ElemType numReduced = (ElemType)(in.GetNumElements() / runVariance.GetNumElements());
+            ElemType bcf = numReduced / (numReduced - 1);
+            for (size_t i = 0; i < runVariance.GetNumElements(); i++)
+            {
+                ElemType& v = runVariance.Data()[i];
+                ElemType& s = savedInvStdDev.Data()[i];
+                v = v * OneMinusExpAvgFactor + bcf * s * (ElemType)expAvgFactor;
+                s = (ElemType)1 / sqrt(s + (ElemType)epsilon);
+            }
         }
 
         return true;
     }
 
-    bool BackwardCoreMKL(const Mat& in, const Mat& srcGrad, Mat& grad,
-        const Mat& savedMean, const Mat& savedVariance, Mat& scaleGrad, Mat& biasGrad, bool accumulateDataGrad)
+    bool BackwardCoreMKL(const Mat& in, const Mat& srcGrad, Mat& grad, const Mat& scale,
+        const Mat& savedMean, const Mat& savedInvStdDev, Mat& scaleGrad, Mat& biasGrad, bool accumulateDataGrad)
     {
         if (!m_mklContext.Supported(m_spatial)) return false;
 
-        m_mklContext.Prepare(m_inOutT.GetNumElements(), srcGrad.GetNumCols(), MKLBatchNormalizationContext::ContextIndex_Backward);
+        m_mklContext.Prepare(m_inOutT, srcGrad.GetNumCols(), MKLBatchNormalizationContext::ContextIndex_Backward);
 
         if (accumulateDataGrad)
         {
@@ -404,7 +438,7 @@ private:
             m_dataGradWorkspace->SetValue(grad);
         }
 
-        m_mklContext.Backward(in.Data(), srcGrad.Data(), grad.Data(), savedMean.Data(), savedVariance.Data(), scaleGrad.Data(), biasGrad.Data());
+        m_mklContext.Backward(in.Data(), srcGrad.Data(), grad.Data(), scale.Data(), savedMean.Data(), savedInvStdDev.Data(), scaleGrad.Data(), biasGrad.Data());
 
         if (accumulateDataGrad)
             cblas_axpby((MKL_INT)grad.GetNumElements(), (ElemType)1.0, m_dataGradWorkspace->Data(), (ElemType)1.0, grad.Data());
