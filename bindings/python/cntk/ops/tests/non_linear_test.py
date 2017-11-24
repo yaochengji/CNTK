@@ -615,6 +615,10 @@ def test_op_batch_normalization(use_cudnn, sample, device_id, precision):
     
 @pytest.mark.parametrize("shape", [(1,), (16,), (16,32,), (16,32,32,)])
 def test_op_batch_normalization_spatial(shape, device_id, precision):
+    import sys
+    if sys.version_info[0] < 3:
+        pytest.skip("Only works on Python 3+")
+
     dtype = PRECISION_TO_TYPE[precision]
     dev = cntk_device(device_id)
 
