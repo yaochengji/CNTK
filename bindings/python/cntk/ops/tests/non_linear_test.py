@@ -615,6 +615,7 @@ def test_op_batch_normalization(use_cudnn, sample, device_id, precision):
     
 @pytest.mark.parametrize("shape", [(1,), (16,), (16,32,), (16,32,32,)])
 def test_op_batch_normalization_spatial(shape, device_id, precision):
+    # for some reason the numpy code below does not work in python 2.7
     import sys
     if sys.version_info[0] < 3:
         pytest.skip("Only works on Python 3+")
@@ -636,7 +637,7 @@ def test_op_batch_normalization_spatial(shape, device_id, precision):
     init_count = 2
     epsilon    = 0.01
 
-    i = C.input_variable(shape, needs_gradient=True, dtype=dtype)
+    i = C.input_variable(shape, dtype=dtype)
     scale = C.parameter(param_shape, init=init_scale, dtype=dtype, device=dev)
     bias = C.parameter(param_shape, init=init_bias, dtype=dtype, device=dev)
     run_mean = C.constant(init_mean, shape=param_shape, dtype=dtype, device=dev)
