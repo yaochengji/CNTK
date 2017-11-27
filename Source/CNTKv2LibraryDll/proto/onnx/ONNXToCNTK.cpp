@@ -1355,7 +1355,7 @@ Variable ONNXToCNTKHelper::GetNodeOperandWithPaddingResolved(std::vector<bool>& 
         LogicError("Ambiguous conv node specification. Both %s and %s attributes are specified. Only one of the two should be specified.",
             "auto_pad", "pads");
     }
-    else if (hasAutoPad)
+    else if (!hasPads)
     {
         ConvAutoPadType auto_pad = ConvertStrToConvAutoPadType(GetNamedAttributeAsString(node, "auto_pad", "SAME_UPPER"));
         switch (auto_pad)
