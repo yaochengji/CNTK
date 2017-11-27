@@ -10,6 +10,7 @@
 #include "PerformanceProfiler.h"
 #include "CompositeFunction.h"
 #include "Serialization.h"
+#include <iostream>
 
 namespace
 {
@@ -170,6 +171,7 @@ namespace CNTK
 
     bool Trainer::TrainMinibatch(const std::unordered_map<Variable, ValuePtr>& arguments, bool isSweepEndInArguments, const DeviceDescriptor& computeDevice /*= DeviceDescriptor::UseDefaultDevice()*/)
     {
+        std::cout << "Updated Code ====*" << std::endl;
         std::unordered_map<Variable, ValuePtr> outputsToFetch = {};
         return TrainMinibatch(arguments, isSweepEndInArguments, outputsToFetch, computeDevice);
     }
@@ -213,7 +215,8 @@ namespace CNTK
     }
 
     bool Trainer::TrainDistributedMinibatch(const std::unordered_map<Variable, ValuePtr>& arguments, std::unordered_map<Variable, ValuePtr>& outputsToFetch, bool sweepEnd, const DeviceDescriptor& computeDevice /*= DeviceDescriptor::UseDefaultDevice()*/)
-    {
+    {        
+        std::cout << "MODIFIED TrainDistributedMinibatch" << std::endl;
         std::unordered_map<Parameter, NDArrayViewPtr> gradients;
         gradients.reserve(m_learnerParameters.size());
 
@@ -226,6 +229,7 @@ namespace CNTK
             // Gradients are not existing.
             for (const auto& parameter : m_learnerParameters)
                 gradients[parameter] = nullptr;
+           
         }
         else
         {
@@ -237,6 +241,22 @@ namespace CNTK
             trainingLoss = m_prevMinibatchAggregateTrainingLossValue->Data();
             evalCriterion = m_prevMinibatchAggregateEvalCriterionValue->Data();
         }
+
+        if (arguments.empty())
+        {
+            std::cout << "11111 arguments.empty()" << std::endl;
+        }
+
+        if (arguments.begin()->second == nullptr)
+        {
+            std::cout << "22222 arguments.begin()->second" << std::endl;
+        }
+
+        if (emptyMinibatch)
+        {
+            std::cout << "33333 emptyMinibatch" << std::endl;
+        }
+
 
         auto currentWorkerNumSamples = m_prevMinibatchNumSamples;
         auto prevTotalNumSamples = TotalNumberOfSamplesSeen();
@@ -264,6 +284,7 @@ namespace CNTK
             m_prevDistributedTotalNumSamples = currentTotalNumSamples;
         }
 
+        std::cout << "num samples current" << currentTotalNumSamples<<"  previous "<<prevTotalNumSamples<<"  prevtotal "<< m_prevDistributedTotalNumSamples<<" updated "<<updated<<std::endl;
         return updated;
     }
 
