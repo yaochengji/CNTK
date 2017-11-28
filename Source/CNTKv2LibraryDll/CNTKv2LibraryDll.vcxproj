@@ -238,7 +238,7 @@
     <ClCompile Include="proto\onnx\ONNX.cpp" />
     <ClCompile Include="proto\onnx\ONNXToCNTK.cpp" />
     <ClCompile Include="proto\onnx\Operators.cpp" />
-    <ClCompile Include="proto\onnx\protobuf\graph.pb.cc.VS_wrapper.cpp" />
+    <ClCompile Include="proto\onnx\protobuf\onnx.pb.cc.VS_wrapper.cpp" />
     <ClCompile Include="Serialization.cpp" />
     <ClCompile Include="stdafx.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
@@ -256,7 +256,7 @@
   </ItemGroup>
   <ItemGroup>
     <Proto Include="proto\CNTK.proto" />
-    <Proto Include="proto\onnx\protobuf\graph.proto" />
+    <Proto Include="proto\onnx\protobuf\onnx-ml.proto" />
     <Proto Include="tensorboard\tensorboard.proto" />
   </ItemGroup>
   <Target Name="ProtoGen" Inputs="@(Proto)" Outputs="@(Proto->'%(RelativeDir)%(Filename).pb.cc')">
