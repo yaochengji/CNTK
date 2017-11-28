@@ -1,9 +1,10 @@
+#pragma warning(disable : 4503)
+
 #include "op.h"
 #include "opsignature.h"
 #include "utils.h"
 #include <cstring>
 
-#pragma warning(disable : 4503)
 
 namespace ONNXIR
 {
