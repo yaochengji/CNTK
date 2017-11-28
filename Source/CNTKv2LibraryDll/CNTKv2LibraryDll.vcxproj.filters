@@ -100,11 +100,11 @@
     <ClCompile Include="proto\onnx\defs\logical\defs.cpp">
       <Filter>proto\onnx\defs\logical</Filter>
     </ClCompile>
-    <ClCompile Include="proto\onnx\protobuf\onnx.pb.cc.VS_wrapper.cpp">
-      <Filter>proto\onnx\protobuf</Filter>
-    </ClCompile>
     <ClCompile Include="proto\CNTK.pb.cc.VS_wrapper.cpp">
       <Filter>proto</Filter>
+    </ClCompile>
+    <ClCompile Include="proto\onnx\protobuf\onnx-ml.pb.cc.VS_wrapper.cpp">
+      <Filter>proto\onnx\protobuf</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>

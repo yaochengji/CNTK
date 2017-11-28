@@ -6,7 +6,7 @@
 #include "constants.h"
 #include "utils.h"
 #pragma warning(push)
-#pragma warning(disable : 4800 4610 4512 4510 4267 4127 4125 4100 4456 4189 4996)
+#pragma warning(disable : 4800 4610 4512 4510 4267 4127 4125 4100 4456 4189 4996 4503)
 #include "proto/onnx/protobuf/onnx-ml.pb.h"
 #pragma warning(pop)
 
