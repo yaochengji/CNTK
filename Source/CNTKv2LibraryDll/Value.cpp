@@ -279,7 +279,7 @@ namespace CNTK
         NDArrayViewPtr deviceValueData;
         if (device == valueData->Device())
         {
-            if (readOnly)
+            if (valueData->IsReadOnly() != readOnly)
                 deviceValueData = valueData->Alias(readOnly);
             else
                 deviceValueData = valueData;
